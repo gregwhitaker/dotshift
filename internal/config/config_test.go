@@ -29,6 +29,9 @@ func TestDefaults(t *testing.T) {
 	if r.Host != "127.0.0.1" || r.Port != 4000 || r.Container != "dotshift-litellm" || !strings.Contains(r.Image, "litellm") {
 		t.Errorf("unexpected defaults: %+v", r)
 	}
+	if c.MCP.Listen != "127.0.0.1:8787" || c.MCP.Disabled {
+		t.Errorf("unexpected MCP defaults: %+v", c.MCP)
+	}
 }
 
 func TestValidationErrors(t *testing.T) {
@@ -48,6 +51,9 @@ func TestValidationErrors(t *testing.T) {
 		{"unknown agent", "providers:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\njobs: {agent: {name: aider}}\n", "not a known agent"},
 		{"repo without path", "providers:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\nrepos:\n  app: {test: make}\n", "repos.app.path is required"},
 		{"unknown field", "providers:\n  openai: {apikey: X}\naliases:\n  a: [openai/gpt-5]\n", "field apikey not found"},
+		{"bad mcp listen", "providers:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\nmcp: {listen: 8787}\n", "mcp.listen"},
+		{"mcp public url with path", "providers:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\nmcp: {public_url: https://x.example/mcp}\n", "mcp.public_url"},
+		{"mcp public url without scheme", "providers:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\nmcp: {public_url: x.example}\n", "mcp.public_url"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

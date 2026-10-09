@@ -41,6 +41,11 @@ type Request struct {
 	Branch string
 	// Base is the commit-ish the branch starts from. Empty means the repo's HEAD.
 	Base string
+	// Continue is the ID of a finished job to follow up on. The new job works
+	// on that job's branch, in that job's repo, and its agent is told what
+	// the earlier job was asked and what it reported. Prompt is the new input.
+	// Repo, Branch and Base are ignored.
+	Continue string
 }
 
 // Job is a job's recorded state.
@@ -76,12 +81,16 @@ type Job struct {
 	CreatedAt  time.Time
 	StartedAt  time.Time
 	FinishedAt time.Time
+	// Parent is the job this one follows up on, if any.
+	Parent string
 }
 
 // RepoInfo describes an allowlisted repo.
 type RepoInfo struct {
 	Name string
 	Path string
+	// HasTests is true when the repo has a test command jobs run.
+	HasTests bool
 }
 
 // Service is the job runner as intakes see it.

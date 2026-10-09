@@ -137,7 +137,7 @@ Milestone 2 is the gate for the MCP work: it proves your dot will call a custom 
 1. **Router MVP with LiteLLM.** `dotshift serve` starts LiteLLM Proxy, which exposes `/v1/chat/completions` and `/v1/responses` with OpenAI, Anthropic, Gemini and Ollama behind aliases. Done when Codex CLI completes a small coding task through it on each provider. *Status: code in PR #2; awaiting a run with real keys.*
 2. **MCP spike (gate).** A stub MCP server with `ping` and a `start_task` that only logs, behind a tunnel with OAuth. Done when your dot calls both from ChatGPT.
 3. **Job runner.** Intake interface, worktree per job, Codex CLI launched against the router, status stored in SQLite. Usable from a `dotshift run` CLI.
-4. **MCP intake v1.** All six tools wired to the job runner, plus the repo allowlist.
+4. **MCP intake v1.** All six tools wired to the job runner, plus the repo allowlist. *Status: code in a draft PR stacked on the job runner; `dotshift serve` runs it behind OAuth with a passcode approval page. `send_input` follows up on a finished task on the same branch, since Codex runs non-interactively. Awaiting a run from ChatGPT through a tunnel.*
 5. **Routing polish.** Per-task model choice, a cost and usage view, and per-model smoke tests. (Fallback chains already shipped in milestone 1.)
 
 ## Open questions and risks

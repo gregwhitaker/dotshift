@@ -4,6 +4,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -28,6 +30,25 @@ type Config struct {
 	// name intakes use to refer to them.
 	Repos map[string]Repo `yaml:"repos"`
 	Jobs  Jobs            `yaml:"jobs"`
+	MCP   MCP             `yaml:"mcp"`
+}
+
+// MCP controls the MCP intake `dotshift serve` runs: the endpoint your dot
+// (or any MCP client) calls through a tunnel to start and follow jobs.
+type MCP struct {
+	// Disabled turns the MCP intake off.
+	Disabled bool `yaml:"disabled"`
+	// Listen is the local address the MCP endpoint serves on. Point your
+	// tunnel here.
+	Listen string `yaml:"listen"`
+	// PublicURL is the tunnel's https URL, e.g. https://dotshift.example.com.
+	// When set, requests for any other host are refused. When empty, dotshift
+	// takes the URL from each request, which suits tunnels whose URL changes.
+	PublicURL string `yaml:"public_url"`
+	// PasscodeEnv names an environment variable holding the passcode you type
+	// to approve a client. Empty means dotshift generates one and stores it
+	// in .dotshift/mcp_passcode next to this config.
+	PasscodeEnv string `yaml:"passcode_env"`
 }
 
 // Repo is one repository jobs are allowed to work in.
@@ -172,6 +193,10 @@ func (c *Config) applyDefaults() {
 	if c.Jobs.Agent.Command == "" {
 		c.Jobs.Agent.Command = c.Jobs.Agent.Name
 	}
+	if c.MCP.Listen == "" {
+		c.MCP.Listen = "127.0.0.1:8787"
+	}
+	c.MCP.PublicURL = strings.TrimRight(c.MCP.PublicURL, "/")
 }
 
 // Validate reports every problem in the config at once.
@@ -229,6 +254,18 @@ func (c *Config) Validate() error {
 		if c.Repos[name].Path == "" {
 			errs = append(errs, fmt.Sprintf("repos.%s.path is required", name))
 		}
+	}
+	if _, port, err := net.SplitHostPort(c.MCP.Listen); err != nil || port == "" {
+		errs = append(errs, fmt.Sprintf("mcp.listen %q must look like host:port, e.g. 127.0.0.1:8787", c.MCP.Listen))
+	}
+	if c.MCP.PublicURL != "" {
+		u, err := url.Parse(c.MCP.PublicURL)
+		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || (u.Path != "" && u.Path != "/") || u.RawQuery != "" {
+			errs = append(errs, fmt.Sprintf("mcp.public_url %q must be a URL with no path, like https://dotshift.example.com", c.MCP.PublicURL))
+		}
+	}
+	if c.MCP.PasscodeEnv != "" && !envPattern.MatchString(c.MCP.PasscodeEnv) {
+		errs = append(errs, fmt.Sprintf("mcp.passcode_env %q is not a valid environment variable name", c.MCP.PasscodeEnv))
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("invalid config:\n  - %s", strings.Join(errs, "\n  - "))

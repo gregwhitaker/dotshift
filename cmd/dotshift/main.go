@@ -23,11 +23,13 @@ const usage = `dotshift: a local model router for coding agents
 
 Usage:
   dotshift init     [-config FILE]   write a starter dotshift.yaml
-  dotshift serve    [-config FILE]   start the router and follow its logs (Ctrl-C stops it)
+  dotshift serve    [-config FILE]   start the router, job runner and MCP intake (Ctrl-C stops them)
   dotshift status   [-config FILE]   show whether the router is up and which models it serves
   dotshift stop     [-config FILE]   stop the router
   dotshift key      [-config FILE]   print the API key clients send to the router
   dotshift litellm-config [-config FILE]   print the generated LiteLLM config
+  dotshift connect  [-revoke] [-new-passcode]
+                                   show how to connect ChatGPT, and the approval passcode
 
 Jobs (the router must be running):
   dotshift run [-repo NAME] [-model ALIAS] [-branch NAME] [-base REF] INSTRUCTIONS
@@ -153,6 +155,12 @@ func runServe(ctx context.Context, path string) error {
 		return err
 	}
 	fmt.Printf("\nRouter is up at %s\nAliases: %s\n\n", r.BaseURL(), strings.Join(cfg.AliasNames(), ", "))
+	stopIntake, err := startIntake(path, cfg, r)
+	if err != nil {
+		return err
+	}
+	defer stopIntake()
+	fmt.Println()
 	fmt.Print(codexSnippet(r.BaseURL(), cfg))
 	fmt.Println("\nFollowing router logs. Press Ctrl-C to stop.")
 	if err := r.Logs(ctx, os.Stdout); err != nil && ctx.Err() == nil {

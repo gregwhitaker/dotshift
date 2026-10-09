@@ -8,11 +8,12 @@ Anthropic, Gemini or a local Ollama model by asking for an alias.
 
 dotshift also runs coding jobs: `dotshift run` hands instructions to Codex CLI,
 which works in its own git worktree on a new branch and calls models through
-the router. Letting an OpenAI dot start jobs over MCP comes next.
+the router. Your OpenAI dot (or any MCP client) can start and follow the same
+jobs over MCP, through a tunnel to your machine.
 
 ## Requirements
 
-- Go 1.24+ to build
+- Go 1.25+ to build
 - Docker, which runs the LiteLLM proxy
 - API keys for the providers you want, as environment variables
 
@@ -23,7 +24,7 @@ go install github.com/gregwhitaker/dotshift/cmd/dotshift@latest
 
 dotshift init                      # writes dotshift.yaml
 export ANTHROPIC_API_KEY=...       # and/or OPENAI_API_KEY, GEMINI_API_KEY
-dotshift serve                     # starts the router, Ctrl-C stops it
+dotshift serve                     # starts the router and MCP intake, Ctrl-C stops them
 ```
 
 `dotshift serve` prints the base URL (`http://127.0.0.1:4000/v1` by default)
@@ -34,11 +35,12 @@ and follows the router's logs.
 | Command | What it does |
 | --- | --- |
 | `dotshift init` | Writes a starter `dotshift.yaml` |
-| `dotshift serve` | Generates the LiteLLM config, starts the container, waits until it's healthy, then follows its logs |
+| `dotshift serve` | Generates the LiteLLM config, starts the container, waits until it's healthy, starts the MCP intake (see [Connecting your dot](#connecting-your-dot-mcp)), then follows the router's logs |
 | `dotshift status` | Shows whether the router is up and which models it serves |
 | `dotshift stop` | Removes the router container |
 | `dotshift key` | Prints the API key clients send to the router |
 | `dotshift litellm-config` | Prints the LiteLLM config generated from `dotshift.yaml` |
+| `dotshift connect` | Shows how to connect ChatGPT and the passcode that approves it; `-revoke` disconnects every client |
 | `dotshift run "..."` | Runs a coding job in an allowlisted repo and waits for it (see [Jobs](#jobs)) |
 | `dotshift jobs [ID]` | Lists jobs, or shows one job's result |
 | `dotshift logs ID` | Prints a job's agent output |
@@ -161,6 +163,62 @@ Codex runs with `--sandbox workspace-write`, so it can only write inside the
 worktree and has no network access for its commands. That's also why dotshift,
 not the agent, makes the commit: a worktree's git metadata lives in the main
 repo, outside the sandbox.
+
+## Connecting your dot (MCP)
+
+`dotshift serve` also runs an MCP server on `127.0.0.1:8787` with these tools:
+
+| Tool | What it does |
+| --- | --- |
+| `list_repos` | Lists the allowlisted repos and the model aliases |
+| `start_task` | Starts a job: repo, instructions, optional alias, branch and base |
+| `task_status` | Status, the end of the agent's output while it runs, its notes when done |
+| `task_result` | Notes, branch, commits, diffstat, test result, and the diff if asked |
+| `send_input` | Follows up on a finished task on the same branch (see below) |
+| `cancel_task` | Stops a running task |
+
+The tools go through the same job runner as `dotshift run`, so the same
+allowlist applies: a task can only run in a repo under `repos:`, and only on
+a new branch in its own worktree.
+
+ChatGPT only connects to MCP servers on the internet, so the endpoint needs a
+tunnel. Run `dotshift connect` for the steps; in short:
+
+1. Start a tunnel to `http://127.0.0.1:8787`, e.g.
+   `cloudflared tunnel --url http://127.0.0.1:8787`. Only the MCP endpoint goes
+   through it; the router stays on this machine.
+2. In ChatGPT, turn on developer mode and create an app with the MCP server URL
+   `https://<tunnel host>/mcp` and OAuth authentication.
+3. ChatGPT opens dotshift's approval page. Type the passcode
+   `dotshift connect` shows.
+
+dotshift is its own OAuth server with one user, you: ChatGPT registers itself,
+and nothing can call the tools until you approve it with the passcode. Access
+tokens last an hour and refresh for 30 days; they're stored hashed in
+`.dotshift/auth.db`. `dotshift connect -revoke` disconnects every client, and
+`dotshift connect -new-passcode` replaces the passcode. After 10 wrong
+passcodes in 10 minutes the approval page stops accepting tries for a while.
+
+```yaml
+mcp:
+  listen: 127.0.0.1:8787
+  # public_url: https://dotshift.example.com  # refuse requests for other hosts
+  # passcode_env: DOTSHIFT_MCP_PASSCODE       # instead of the generated passcode
+  # disabled: true
+```
+
+Without `public_url`, dotshift takes its URL from each request as the tunnel
+forwards it, which suits quick tunnels whose URL changes on every start. Set
+it when your tunnel has a fixed name.
+
+**Follow-ups.** Codex runs non-interactively, so an agent can't stop to ask a
+question mid-task; it asks in its notes when it finishes. `send_input`
+answers it: it starts a new task on the same branch whose agent is told the
+earlier instructions and notes, and adds its commits on top. It works on a
+finished task whose worktree is gone (every `done` task, or a failed one after
+`dotshift clean`). `dotshift jobs` shows which task a follow-up came from.
+
+Stopping `dotshift serve` cancels the tasks it is running.
 
 ## Development
 

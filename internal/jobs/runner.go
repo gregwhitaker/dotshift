@@ -54,7 +54,8 @@ var _ Service = (*Runner)(nil)
 func (r *Runner) Repos() []RepoInfo {
 	var out []RepoInfo
 	for _, name := range r.Config.RepoNames() {
-		out = append(out, RepoInfo{Name: name, Path: expandHome(r.Config.Repos[name].Path)})
+		repo := r.Config.Repos[name]
+		out = append(out, RepoInfo{Name: name, Path: expandHome(repo.Path), HasTests: repo.Test != ""})
 	}
 	return out
 }
@@ -88,6 +89,24 @@ func (r *Runner) resolveRepo(ref string) (string, config.Repo, error) {
 func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 	if strings.TrimSpace(req.Prompt) == "" {
 		return nil, errors.New("no instructions given")
+	}
+	var parent *Job
+	if req.Continue != "" {
+		p, err := r.Get(ctx, req.Continue)
+		if err != nil {
+			return nil, err
+		}
+		if !p.Status.Terminal() {
+			return nil, fmt.Errorf("job %s is still %s; wait for it to finish, or cancel it, before following up", p.ID, p.Status)
+		}
+		if p.Worktree != "" {
+			return nil, fmt.Errorf("job %s left its worktree at %s; remove it with `dotshift clean %s` before following up", p.ID, p.Worktree, p.ID)
+		}
+		parent = p
+		req.Repo, req.Branch, req.Base = p.Repo, p.Branch, p.BaseCommit
+		if req.Model == "" {
+			req.Model = p.Model
+		}
 	}
 	name, repo, err := r.resolveRepo(req.Repo)
 	if err != nil {
@@ -124,7 +143,9 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 	if _, err := git(ctx, top, "check-ref-format", "--branch", branch); err != nil {
 		return nil, fmt.Errorf("%q is not a valid branch name", branch)
 	}
-	if _, err := git(ctx, top, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+	_, branchErr := git(ctx, top, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	branchExists := branchErr == nil
+	if branchExists && parent == nil {
 		return nil, fmt.Errorf("branch %s already exists in %s", branch, name)
 	}
 
@@ -153,7 +174,18 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 		Status: Queued, LogPath: filepath.Join(logDir, id+".log"),
 		RunnerPID: os.Getpid(), CreatedAt: time.Now(),
 	}
-	if _, err := git(ctx, top, "worktree", "add", "--quiet", "-b", branch, j.Worktree, baseCommit); err != nil {
+	add := []string{"worktree", "add", "--quiet", "-b", branch, j.Worktree, baseCommit}
+	prompt := req.Prompt
+	if parent != nil {
+		j.Parent = parent.ID
+		prompt = r.followUpPrompt(ctx, parent, req.Prompt)
+		// A follow-up adds to the earlier job's branch. The branch is gone
+		// only when that job made no commits, so it starts again from the base.
+		if branchExists {
+			add = []string{"worktree", "add", "--quiet", j.Worktree, branch}
+		}
+	}
+	if _, err := git(ctx, top, add...); err != nil {
 		return nil, err
 	}
 	if err := r.Store.Save(ctx, j); err != nil {
@@ -174,7 +206,7 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 	go func() {
 		defer close(a.done)
 		defer cancel()
-		r.run(jobCtx, j, repo)
+		r.run(jobCtx, j, repo, prompt)
 		r.mu.Lock()
 		delete(r.running, id)
 		r.mu.Unlock()
@@ -183,7 +215,7 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 }
 
 // run takes a recorded job through the agent, tests and commit.
-func (r *Runner) run(ctx context.Context, j *Job, repo config.Repo) {
+func (r *Runner) run(ctx context.Context, j *Job, repo config.Repo, prompt string) {
 	bg := context.Background() // record the outcome even after cancellation
 	finish := func(st Status, msg string) {
 		j.Status, j.Error, j.FinishedAt, j.AgentPID = st, msg, time.Now(), 0
@@ -207,10 +239,10 @@ func (r *Runner) run(ctx context.Context, j *Job, repo config.Repo) {
 	defer cancelTimeout()
 	lastMessage := filepath.Join(filepath.Dir(j.LogPath), j.ID+".summary")
 	cmd := r.Agent.Command(agentCtx, agent.Task{
-		Dir: j.Worktree, Prompt: j.Prompt, Model: j.Model, BaseURL: r.BaseURL,
+		Dir: j.Worktree, Prompt: prompt, Model: j.Model, BaseURL: r.BaseURL,
 		APIKeyEnv: APIKeyEnv, LastMessageFile: lastMessage,
 	})
-	cmd.Stdin = strings.NewReader(j.Prompt + promptSuffix)
+	cmd.Stdin = strings.NewReader(prompt + promptSuffix)
 	cmd.Stdout, cmd.Stderr = out, out
 	cmd.Env = append(cmd.Environ(), APIKeyEnv+"="+r.APIKey)
 	detach(cmd)
@@ -406,6 +438,71 @@ func (r *Runner) Clean(ctx context.Context, id string) (*Job, error) {
 	n, _ := git(ctx, j.RepoPath, "rev-list", "--count", j.BaseCommit+".."+j.Branch)
 	r.removeWorktree(ctx, j, n == "0")
 	return j, r.Store.Save(ctx, j)
+}
+
+// followUpPrompt tells a follow-up job's agent what came before: the agent
+// starts fresh each time, so earlier instructions and notes are its memory.
+func (r *Runner) followUpPrompt(ctx context.Context, parent *Job, input string) string {
+	var chain []*Job
+	for j := parent; j != nil && len(chain) < 5; {
+		chain = append(chain, j)
+		if j.Parent == "" {
+			break
+		}
+		j, _ = r.Store.Get(ctx, j.Parent)
+	}
+	var b strings.Builder
+	b.WriteString("You are following up on earlier work on this branch. The commits already on it are that work.\n")
+	for i := len(chain) - 1; i >= 0; i-- {
+		j := chain[i]
+		fmt.Fprintf(&b, "\nEarlier instructions:\n%s\n", strings.TrimSpace(j.Prompt))
+		if j.Summary != "" {
+			fmt.Fprintf(&b, "\nWhat you reported then:\n%s\n", strings.TrimSpace(j.Summary))
+		}
+		if j.Status != Done {
+			fmt.Fprintf(&b, "\nThat run ended %s: %s\n", j.Status, j.Error)
+		}
+	}
+	fmt.Fprintf(&b, "\nNow:\n%s", strings.TrimSpace(input))
+	return b.String()
+}
+
+// Shutdown cancels the jobs this process is running and waits until each has
+// recorded how it ended, or ctx ends.
+func (r *Runner) Shutdown(ctx context.Context, reason string) {
+	r.mu.Lock()
+	running := make(map[string]*active, len(r.running))
+	for id, a := range r.running {
+		running[id] = a
+	}
+	r.mu.Unlock()
+	for id, a := range running {
+		_ = r.Store.SetStatus(ctx, id, Cancelled, reason)
+		a.cancel()
+	}
+	for _, a := range running {
+		select {
+		case <-a.done:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// Diff returns the changes a job's branch makes on top of its base commit,
+// cut to at most max bytes.
+func Diff(ctx context.Context, j *Job, max int) (patch string, truncated bool, err error) {
+	if j.Commits == 0 {
+		return "", false, nil
+	}
+	patch, err = git(ctx, j.RepoPath, "diff", j.BaseCommit, "refs/heads/"+j.Branch)
+	if err != nil {
+		return "", false, err
+	}
+	if len(patch) > max {
+		return patch[:max], true, nil
+	}
+	return patch, false, nil
 }
 
 func commitMessage(j *Job) string {

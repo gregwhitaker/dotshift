@@ -54,4 +54,12 @@ jobs:
     name: codex           # Codex CLI, run as: codex exec ...
     # command: /usr/local/bin/codex
     # args: ["--sandbox", "workspace-write"]
+
+# The MCP endpoint your OpenAI dot (or any MCP client) calls to start and
+# follow jobs. "dotshift serve" runs it; "dotshift connect" shows how to
+# reach it through a tunnel and the passcode that approves a client.
+mcp:
+  listen: 127.0.0.1:8787  # point your tunnel here
+  # public_url: https://dotshift.example.com   # your tunnel's URL, if it's fixed
+  # disabled: true
 `

@@ -35,6 +35,12 @@ func fakeAgent(mode string) int {
 	case "edit":
 		os.WriteFile("hello.txt", []byte("hello from the agent\n"), 0o644)
 		os.WriteFile(summary, []byte("Added hello.txt.\n"), 0o644)
+	case "append":
+		fmt.Println(prompt)
+		f, _ := os.OpenFile("hello.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		f.WriteString("and more\n")
+		f.Close()
+		os.WriteFile(summary, []byte("Appended to hello.txt.\n"), 0o644)
 	case "noop":
 		os.WriteFile(summary, []byte("Nothing to change.\n"), 0o644)
 	case "fail":
@@ -317,5 +323,89 @@ func TestReconcileDeadRunner(t *testing.T) {
 	}
 	if got.Status != Failed || !strings.Contains(got.Error, "stopped") {
 		t.Fatalf("job = %+v", got)
+	}
+}
+
+func TestFollowUpAddsToTheSameBranch(t *testing.T) {
+	r, repo := setup(t, "edit", "")
+	ctx := context.Background()
+	first := submitAndWait(t, r, Request{Repo: "demo", Prompt: "add hello", Model: "fast"})
+	if first.Status != Done || first.Commits != 1 {
+		t.Fatalf("first = %+v", first)
+	}
+
+	r.Agent = fake{"append"}
+	next := submitAndWait(t, r, Request{Continue: first.ID, Prompt: "also add more"})
+	if next.Status != Done || next.Parent != first.ID {
+		t.Fatalf("follow-up = %+v", next)
+	}
+	if next.Branch != first.Branch || next.Model != "fast" || next.BaseCommit != first.BaseCommit || next.Commits != 2 {
+		t.Errorf("follow-up = branch %s model %s base %s commits %d", next.Branch, next.Model, next.BaseCommit, next.Commits)
+	}
+	if got := run(t, repo, "git", "show", next.Branch+":hello.txt"); got != "hello from the agent\nand more" {
+		t.Errorf("hello.txt = %q", got)
+	}
+	log, _ := os.ReadFile(next.LogPath)
+	for _, want := range []string{"Earlier instructions:\nadd hello", "What you reported then:\nAdded hello.txt.", "Now:\nalso add more"} {
+		if !strings.Contains(string(log), want) {
+			t.Errorf("agent prompt is missing %q:\n%s", want, log)
+		}
+	}
+	patch, truncated, err := Diff(ctx, next, 1<<20)
+	if err != nil || truncated || !strings.Contains(patch, "+and more") || !strings.Contains(patch, "+hello from the agent") {
+		t.Errorf("Diff = %q, %v, %v", patch, truncated, err)
+	}
+}
+
+func TestFollowUpRejects(t *testing.T) {
+	r, _ := setup(t, "fail", "")
+	ctx := context.Background()
+	failed := submitAndWait(t, r, Request{Repo: "demo", Prompt: "break"})
+	if _, err := r.Submit(ctx, Request{Continue: failed.ID, Prompt: "again"}); err == nil || !strings.Contains(err.Error(), "dotshift clean") {
+		t.Errorf("err = %v", err)
+	}
+	if _, err := r.Submit(ctx, Request{Continue: "nope", Prompt: "again"}); err == nil || !strings.Contains(err.Error(), "no such job") {
+		t.Errorf("err = %v", err)
+	}
+	r.Agent = fake{"sleep"}
+	running, err := r.Submit(ctx, Request{Repo: "demo", Prompt: "take forever"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Submit(ctx, Request{Continue: running.ID, Prompt: "again"}); err == nil || !strings.Contains(err.Error(), "wait for it to finish") {
+		t.Errorf("err = %v", err)
+	}
+	r.Shutdown(ctx, "shutting down")
+	j, _ := r.Get(ctx, running.ID)
+	if j.Status != Cancelled || j.Error != "shutting down" {
+		t.Errorf("after Shutdown = %s (%s)", j.Status, j.Error)
+	}
+}
+
+func TestStoreUpgradesOldDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.db")
+	old := strings.Replace(schema, ",\n\tparent      TEXT NOT NULL DEFAULT ''", "", 1)
+	if old == schema {
+		t.Fatal("schema no longer has the parent column")
+	}
+	s, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.db.Exec(`DROP TABLE jobs`)
+	if _, err := s.db.Exec(old); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Save(context.Background(), &Job{ID: "a", Parent: "b", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if j, err := s.Get(context.Background(), "a"); err != nil || j.Parent != "b" {
+		t.Fatalf("Get = %+v, %v", j, err)
 	}
 }

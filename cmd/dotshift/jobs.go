@@ -104,6 +104,9 @@ func printJob(w io.Writer, j *jobs.Job) {
 	fmt.Fprintf(w, "Repo:     %s (%s)\n", j.Repo, j.RepoPath)
 	fmt.Fprintf(w, "Branch:   %s, %d commit(s) on %s\n", j.Branch, j.Commits, short(j.BaseCommit))
 	fmt.Fprintf(w, "Model:    %s\n", j.Model)
+	if j.Parent != "" {
+		fmt.Fprintf(w, "Follows:  job %s\n", j.Parent)
+	}
 	if !j.StartedAt.IsZero() {
 		end := j.FinishedAt
 		if end.IsZero() {

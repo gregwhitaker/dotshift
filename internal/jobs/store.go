@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
@@ -41,7 +42,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 	agent_pid   INTEGER NOT NULL DEFAULT 0,
 	created_at  INTEGER NOT NULL,
 	started_at  INTEGER NOT NULL DEFAULT 0,
-	finished_at INTEGER NOT NULL DEFAULT 0
+	finished_at INTEGER NOT NULL DEFAULT 0,
+	parent      TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS jobs_created ON jobs (created_at);
 `
@@ -57,6 +59,11 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("open job database %s: %w", path, err)
 	}
+	// Databases made before follow-up jobs existed lack the parent column.
+	if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN parent TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, fmt.Errorf("upgrade job database %s: %w", path, err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -65,15 +72,15 @@ func (s *Store) Close() error { return s.db.Close() }
 
 const columns = `id, repo, repo_path, prompt, model, branch, base_commit, worktree, status,
 	error, summary, commits, diffstat, test_result, test_output, exit_code, log_path,
-	runner_pid, agent_pid, created_at, started_at, finished_at`
+	runner_pid, agent_pid, created_at, started_at, finished_at, parent`
 
 // Save inserts or replaces a job.
 func (s *Store) Save(ctx context.Context, j *Job) error {
 	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO jobs (`+columns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		j.ID, j.Repo, j.RepoPath, j.Prompt, j.Model, j.Branch, j.BaseCommit, j.Worktree, string(j.Status),
 		j.Error, j.Summary, j.Commits, j.DiffStat, j.TestResult, j.TestOutput, j.ExitCode, j.LogPath,
-		j.RunnerPID, j.AgentPID, unix(j.CreatedAt), unix(j.StartedAt), unix(j.FinishedAt))
+		j.RunnerPID, j.AgentPID, unix(j.CreatedAt), unix(j.StartedAt), unix(j.FinishedAt), j.Parent)
 	return err
 }
 
@@ -132,7 +139,7 @@ func scan(r scanner) (*Job, error) {
 	var created, started, finished int64
 	err := r.Scan(&j.ID, &j.Repo, &j.RepoPath, &j.Prompt, &j.Model, &j.Branch, &j.BaseCommit, &j.Worktree, &status,
 		&j.Error, &j.Summary, &j.Commits, &j.DiffStat, &j.TestResult, &j.TestOutput, &j.ExitCode, &j.LogPath,
-		&j.RunnerPID, &j.AgentPID, &created, &started, &finished)
+		&j.RunnerPID, &j.AgentPID, &created, &started, &finished, &j.Parent)
 	if err != nil {
 		return nil, err
 	}

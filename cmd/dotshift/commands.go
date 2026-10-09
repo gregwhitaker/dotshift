@@ -72,20 +72,29 @@ func openRunner(configPath string) (*jobs.Runner, *router.Router, func(), error)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	store, err := jobs.OpenStore(filepath.Join(dir, "jobs.db"))
+	runner, closeStore, err := newRunner(cfg, r, dir)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	return runner, r, closeStore, nil
+}
+
+// newRunner opens the job store in dir and returns a runner whose agents call r.
+func newRunner(cfg *config.Config, r *router.Router, dir string) (*jobs.Runner, func(), error) {
+	store, err := jobs.OpenStore(filepath.Join(dir, "jobs.db"))
+	if err != nil {
+		return nil, nil, err
 	}
 	a, err := agent.New(cfg.Jobs.Agent)
 	if err != nil {
 		store.Close()
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	key, err := router.MasterKey(cfg, dir)
 	if err != nil {
 		store.Close()
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	runner := &jobs.Runner{Config: cfg, Store: store, Agent: a, BaseURL: r.BaseURL(), APIKey: key, StateDir: dir}
-	return runner, r, func() { store.Close() }, nil
+	return runner, func() { store.Close() }, nil
 }
