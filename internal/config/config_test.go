@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSampleParses(t *testing.T) {
@@ -42,6 +43,10 @@ func TestValidationErrors(t *testing.T) {
 		{"bad alias name", "providers:\n  openai: {}\naliases:\n  Smart: [openai/gpt-5]\n", "aliases.Smart"},
 		{"bad env name", "providers:\n  openai: {api_key_env: 'my key'}\naliases:\n  a: [openai/gpt-5]\n", "not a valid environment variable"},
 		{"bad port", "router: {port: 70000}\nproviders:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\n", "out of range"},
+		{"job model not an alias", "providers:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\njobs: {model: b}\n", `jobs.model "b"`},
+		{"bad timeout", "providers:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\njobs: {timeout: soon}\n", "not a duration"},
+		{"unknown agent", "providers:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\njobs: {agent: {name: aider}}\n", "not a known agent"},
+		{"repo without path", "providers:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\nrepos:\n  app: {test: make}\n", "repos.app.path is required"},
 		{"unknown field", "providers:\n  openai: {apikey: X}\naliases:\n  a: [openai/gpt-5]\n", "field apikey not found"},
 	}
 	for _, tt := range tests {
@@ -61,5 +66,23 @@ func TestSplitModel(t *testing.T) {
 	}
 	if _, _, ok := SplitModel("/x"); ok {
 		t.Error("empty provider accepted")
+	}
+}
+
+func TestJobDefaults(t *testing.T) {
+	c, err := Parse([]byte("providers:\n  openai: {}\naliases:\n  fast: [openai/a]\n  smart: [openai/b]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := c.Jobs
+	if j.Model != "smart" || j.Timeout.Duration != time.Hour || j.Agent.Name != "codex" || j.Agent.Command != "codex" {
+		t.Errorf("unexpected job defaults: %+v", j)
+	}
+	c, err = Parse([]byte("providers:\n  openai: {}\naliases:\n  quick: [openai/a]\njobs: {timeout: 45m}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Jobs.Model != "quick" || c.Jobs.Timeout.Duration != 45*time.Minute {
+		t.Errorf("unexpected jobs: %+v", c.Jobs)
 	}
 }

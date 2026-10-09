@@ -28,6 +28,14 @@ Usage:
   dotshift stop     [-config FILE]   stop the router
   dotshift key      [-config FILE]   print the API key clients send to the router
   dotshift litellm-config [-config FILE]   print the generated LiteLLM config
+
+Jobs (the router must be running):
+  dotshift run [-repo NAME] [-model ALIAS] [-branch NAME] [-base REF] INSTRUCTIONS
+                                   run a coding job in a new worktree and wait for it
+  dotshift jobs [ID]               list jobs, or show one job's result
+  dotshift logs ID                 print a job's agent output
+  dotshift cancel ID               stop a running job
+  dotshift clean ID                remove the worktree a failed or cancelled job left
 `
 
 func main() {
@@ -36,6 +44,9 @@ func main() {
 		os.Exit(2)
 	}
 	cmd, args := os.Args[1], os.Args[2:]
+	if c, ok := commands[cmd]; ok {
+		os.Exit(c(args))
+	}
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	path := fs.String("config", config.DefaultPath, "path to dotshift.yaml")
 	force := fs.Bool("force", false, "init: overwrite an existing config")

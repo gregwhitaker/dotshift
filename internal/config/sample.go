@@ -39,4 +39,19 @@ aliases:
     - gemini/gemini-2.5-pro
   local:
     - ollama_chat/qwen2.5-coder
+
+# Repositories jobs may work in. Jobs never touch these working copies: each
+# job gets its own git worktree on a new branch.
+repos: {}
+#  myapp:
+#    path: ~/code/myapp
+#    test: go test ./...   # optional; run after the agent, result kept on the job
+
+jobs:
+  model: smart            # alias used when a job doesn't ask for one
+  timeout: 1h
+  agent:
+    name: codex           # Codex CLI, run as: codex exec ...
+    # command: /usr/local/bin/codex
+    # args: ["--sandbox", "workspace-write"]
 `
