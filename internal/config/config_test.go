@@ -42,6 +42,7 @@ func TestValidationErrors(t *testing.T) {
 		{"bad alias name", "providers:\n  openai: {}\naliases:\n  Smart: [openai/gpt-5]\n", "aliases.Smart"},
 		{"bad env name", "providers:\n  openai: {api_key_env: 'my key'}\naliases:\n  a: [openai/gpt-5]\n", "not a valid environment variable"},
 		{"bad port", "router: {port: 70000}\nproviders:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\n", "out of range"},
+		{"bad usage_listen", "router: {usage_listen: localhost}\nproviders:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\n", "router.usage_listen"},
 		{"unknown field", "providers:\n  openai: {apikey: X}\naliases:\n  a: [openai/gpt-5]\n", "field apikey not found"},
 	}
 	for _, tt := range tests {

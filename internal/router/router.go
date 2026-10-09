@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -24,10 +25,23 @@ type Router struct {
 	masterKey  string
 	docker     string
 	client     *http.Client
+	// usageEndpoint and usageToken, when set, are where the proxy posts usage
+	// records and the token it sends with them.
+	usageEndpoint string
+	usageToken    string
 }
 
 // masterKeyEnv is the variable LiteLLM reads its master key from.
 const masterKeyEnv = "LITELLM_MASTER_KEY"
+
+// Variables LiteLLM's generic_api callback reads its endpoint and headers from.
+const (
+	usageEndpointEnv = "GENERIC_LOGGER_ENDPOINT"
+	usageHeadersEnv  = "GENERIC_LOGGER_HEADERS"
+)
+
+// HostAlias is the name the container uses to reach this machine.
+const HostAlias = "host.docker.internal"
 
 // New returns a Router that mounts the LiteLLM config at configPath and
 // protects the proxy with masterKey.
@@ -39,6 +53,9 @@ func New(cfg *config.Config, configPath, masterKey string) *Router {
 func (r *Router) BaseURL() string {
 	return fmt.Sprintf("http://%s:%d/v1", r.cfg.Router.Host, r.cfg.Router.Port)
 }
+
+// APIKey is the key clients send to the proxy.
+func (r *Router) APIKey() string { return r.masterKey }
 
 func (r *Router) rootURL() string {
 	return fmt.Sprintf("http://%s:%d", r.cfg.Router.Host, r.cfg.Router.Port)
@@ -53,16 +70,42 @@ func (r *Router) RunArgs() []string {
 		"run", "--rm", "--detach",
 		"--name", c.Container,
 		"--publish", fmt.Sprintf("%s:%d:%d", c.Host, c.Port, litellm.ContainerPort),
-		"--add-host", "host.docker.internal:host-gateway",
+		"--add-host", HostAlias + ":host-gateway",
 		"--volume", fmt.Sprintf("%s:%s:ro", r.configPath, litellm.ContainerConfigPath),
 	}
-	for _, env := range append(r.cfg.KeyEnvs(), masterKeyEnv) {
+	envs := append(r.cfg.KeyEnvs(), masterKeyEnv)
+	if r.usageEndpoint != "" {
+		envs = append(envs, usageEndpointEnv, usageHeadersEnv)
+	}
+	for _, env := range envs {
 		args = append(args, "--env", env)
 	}
 	args = append(args, c.Image,
 		"--config", litellm.ContainerConfigPath,
 		"--port", fmt.Sprint(litellm.ContainerPort))
 	return args
+}
+
+// SendUsage makes the proxy post a usage record for every call to endpoint,
+// authenticated with token. Call it before Start.
+func (r *Router) SendUsage(endpoint, token string) {
+	r.usageEndpoint, r.usageToken = endpoint, token
+}
+
+// BridgeGateway returns the host's address on Docker's default bridge
+// network, which is where host.docker.internal points on Linux.
+func (r *Router) BridgeGateway(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, r.docker, "network", "inspect", "bridge",
+		"--format", "{{range .IPAM.Config}}{{.Gateway}} {{end}}").Output()
+	if err != nil {
+		return "", fmt.Errorf("docker network inspect bridge: %w", err)
+	}
+	for _, f := range strings.Fields(string(out)) {
+		if ip := net.ParseIP(f); ip != nil && ip.To4() != nil {
+			return f, nil
+		}
+	}
+	return "", errors.New("docker's bridge network has no IPv4 gateway")
 }
 
 // MissingEnv lists key variables named in the config but unset here.
@@ -84,6 +127,11 @@ func (r *Router) Start(ctx context.Context) error {
 	_ = r.Stop(ctx)
 	cmd := exec.CommandContext(ctx, r.docker, r.RunArgs()...)
 	cmd.Env = append(os.Environ(), masterKeyEnv+"="+r.masterKey)
+	if r.usageEndpoint != "" {
+		cmd.Env = append(cmd.Env,
+			usageEndpointEnv+"="+r.usageEndpoint,
+			usageHeadersEnv+"=Authorization=Bearer "+r.usageToken)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker run failed: %w\n%s", err, strings.TrimSpace(string(out)))

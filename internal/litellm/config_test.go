@@ -35,6 +35,9 @@ func TestBuild(t *testing.T) {
 	if !reflect.DeepEqual(doc.ModelList, want) {
 		t.Errorf("model_list =\n%+v\nwant\n%+v", doc.ModelList, want)
 	}
+	if got := doc.LiteLLMSettings.Callbacks; !reflect.DeepEqual(got, []string{"generic_api"}) || !doc.LiteLLMSettings.TurnOffMessageLogging {
+		t.Errorf("usage callback = %v, turn_off_message_logging = %v", got, doc.LiteLLMSettings.TurnOffMessageLogging)
+	}
 	wantFallbacks := []map[string][]string{{"smart": {"smart~1"}}}
 	if !reflect.DeepEqual(doc.LiteLLMSettings.Fallbacks, wantFallbacks) {
 		t.Errorf("fallbacks = %v, want %v", doc.LiteLLMSettings.Fallbacks, wantFallbacks)
@@ -62,5 +65,16 @@ func TestMarshalHasNoSecretsAndHeader(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Errorf("generated config missing %q:\n%s", want, s)
 		}
+	}
+}
+
+func TestBuildUsageOff(t *testing.T) {
+	c, err := config.Parse([]byte(testConfig + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Router.UsageListen = config.UsageOff
+	if doc := Build(c); doc.LiteLLMSettings.Callbacks != nil {
+		t.Errorf("callbacks = %v with usage off", doc.LiteLLMSettings.Callbacks)
 	}
 }
