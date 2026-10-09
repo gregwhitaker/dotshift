@@ -59,7 +59,10 @@ jobs:
 # follow jobs. "dotshift serve" runs it; "dotshift connect" shows how to
 # reach it through a tunnel and the passcode that approves a client.
 mcp:
-  listen: 127.0.0.1:8787  # point your tunnel here
-  # public_url: https://dotshift.example.com   # your tunnel's URL, if it's fixed
+  listen: 127.0.0.1:8787
+  # "dotshift serve" runs Tailscale Funnel, which serves the endpoint at
+  # https://<machine>.<tailnet>.ts.net/mcp. Use "none" to run your own tunnel.
+  tunnel: tailscale
+  # public_url: https://dotshift.example.com   # the URL clients use, if not Funnel's
   # disabled: true
 `

@@ -41,9 +41,15 @@ type MCP struct {
 	// Listen is the local address the MCP endpoint serves on. Point your
 	// tunnel here.
 	Listen string `yaml:"listen"`
-	// PublicURL is the tunnel's https URL, e.g. https://dotshift.example.com.
-	// When set, requests for any other host are refused. When empty, dotshift
-	// takes the URL from each request, which suits tunnels whose URL changes.
+	// Tunnel is how ChatGPT reaches the endpoint. "tailscale" (the default)
+	// has `dotshift serve` run Tailscale Funnel, which serves it at this
+	// machine's https://<machine>.<tailnet>.ts.net name. "none" leaves the
+	// tunnel to you.
+	Tunnel string `yaml:"tunnel"`
+	// PublicURL is the https URL clients reach the endpoint at. Requests for
+	// any other host are refused. With the Tailscale tunnel it defaults to the
+	// Funnel URL; with none and no public_url, dotshift takes the URL from
+	// each request, as the tunnel forwarded it.
 	PublicURL string `yaml:"public_url"`
 	// PasscodeEnv names an environment variable holding the passcode you type
 	// to approve a client. Empty means dotshift generates one and stores it
@@ -94,6 +100,12 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	d.Duration = v
 	return nil
 }
+
+// Values of mcp.tunnel.
+const (
+	TunnelTailscale = "tailscale"
+	TunnelNone      = "none"
+)
 
 // KnownAgents are the coding agents dotshift can launch.
 var KnownAgents = map[string]bool{"codex": true}
@@ -196,6 +208,9 @@ func (c *Config) applyDefaults() {
 	if c.MCP.Listen == "" {
 		c.MCP.Listen = "127.0.0.1:8787"
 	}
+	if c.MCP.Tunnel == "" {
+		c.MCP.Tunnel = TunnelTailscale
+	}
 	c.MCP.PublicURL = strings.TrimRight(c.MCP.PublicURL, "/")
 }
 
@@ -263,6 +278,9 @@ func (c *Config) Validate() error {
 		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || (u.Path != "" && u.Path != "/") || u.RawQuery != "" {
 			errs = append(errs, fmt.Sprintf("mcp.public_url %q must be a URL with no path, like https://dotshift.example.com", c.MCP.PublicURL))
 		}
+	}
+	if c.MCP.Tunnel != TunnelTailscale && c.MCP.Tunnel != TunnelNone {
+		errs = append(errs, fmt.Sprintf("mcp.tunnel %q must be tailscale or none", c.MCP.Tunnel))
 	}
 	if c.MCP.PasscodeEnv != "" && !envPattern.MatchString(c.MCP.PasscodeEnv) {
 		errs = append(errs, fmt.Sprintf("mcp.passcode_env %q is not a valid environment variable name", c.MCP.PasscodeEnv))

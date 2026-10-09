@@ -478,6 +478,10 @@ func TestHostsThroughATunnel(t *testing.T) {
 	if status, _ := metadata(t, srv, "/healthz", "localhost:8787", nil); status != 200 {
 		t.Fatalf("localhost: %d", status)
 	}
+	// A tunnel that rewrites Host to the local address still gets the public URL.
+	if status, out := metadata(t, srv, "/.well-known/oauth-protected-resource", "127.0.0.1:8787", nil); status != 200 || out["resource"] != "https://dotshift.example.com/mcp" {
+		t.Fatalf("local host with public URL: %d %v", status, out)
+	}
 }
 
 func TestPasscode(t *testing.T) {

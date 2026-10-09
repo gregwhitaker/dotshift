@@ -9,7 +9,7 @@ Anthropic, Gemini or a local Ollama model by asking for an alias.
 dotshift also runs coding jobs: `dotshift run` hands instructions to Codex CLI,
 which works in its own git worktree on a new branch and calls models through
 the router. Your OpenAI dot (or any MCP client) can start and follow the same
-jobs over MCP, through a tunnel to your machine.
+jobs over MCP, published with Tailscale Funnel.
 
 ## Requirements
 
@@ -181,16 +181,25 @@ The tools go through the same job runner as `dotshift run`, so the same
 allowlist applies: a task can only run in a repo under `repos:`, and only on
 a new branch in its own worktree.
 
-ChatGPT only connects to MCP servers on the internet, so the endpoint needs a
-tunnel. Run `dotshift connect` for the steps; in short:
+ChatGPT only connects to MCP servers on the internet, so `dotshift serve`
+puts the endpoint there with [Tailscale Funnel](https://tailscale.com/kb/1223/funnel):
+it runs `tailscale funnel 8787` while it runs, which serves the endpoint at
+your machine's `https://<machine>.<tailnet>.ts.net` name, and stops it on
+exit. Only the MCP endpoint is published; the router stays on this machine.
+Run `dotshift connect` for the steps; in short:
 
-1. Start a tunnel to `http://127.0.0.1:8787`, e.g.
-   `cloudflared tunnel --url http://127.0.0.1:8787`. Only the MCP endpoint goes
-   through it; the router stays on this machine.
+1. Once per machine: install Tailscale, log in (`tailscale up`), and run
+   `tailscale funnel 8787` once by hand. If Funnel isn't on for your tailnet
+   yet, it prints a link to turn it on; then press Ctrl-C.
 2. In ChatGPT, turn on developer mode and create an app with the MCP server URL
-   `https://<tunnel host>/mcp` and OAuth authentication.
+   `https://<machine>.<tailnet>.ts.net/mcp` (`dotshift connect` prints yours)
+   and OAuth authentication.
 3. ChatGPT opens dotshift's approval page. Type the passcode
    `dotshift connect` shows.
+
+If Tailscale isn't installed, logged in or allowed to use Funnel, `dotshift
+serve` says why and keeps running with the endpoint reachable only from this
+machine.
 
 dotshift is its own OAuth server with one user, you: ChatGPT registers itself,
 and nothing can call the tools until you approve it with the passcode. Access
@@ -198,18 +207,20 @@ tokens last an hour and refresh for 30 days; they're stored hashed in
 `.dotshift/auth.db`. `dotshift connect -revoke` disconnects every client, and
 `dotshift connect -new-passcode` replaces the passcode. After 10 wrong
 passcodes in 10 minutes the approval page stops accepting tries for a while.
+Requests for any host but the Funnel name (or this machine) are refused.
 
 ```yaml
 mcp:
   listen: 127.0.0.1:8787
-  # public_url: https://dotshift.example.com  # refuse requests for other hosts
+  tunnel: tailscale                           # or none, to run your own tunnel
+  # public_url: https://dotshift.example.com  # the URL clients use, if not Funnel's
   # passcode_env: DOTSHIFT_MCP_PASSCODE       # instead of the generated passcode
   # disabled: true
 ```
 
-Without `public_url`, dotshift takes its URL from each request as the tunnel
-forwards it, which suits quick tunnels whose URL changes on every start. Set
-it when your tunnel has a fixed name.
+With `tunnel: none`, point your own tunnel at `http://127.0.0.1:8787`. Set
+`public_url` to its URL if it has a fixed name; without it, dotshift takes its
+URL from each request as the tunnel forwards it.
 
 **Follow-ups.** Codex runs non-interactively, so an agent can't stop to ask a
 question mid-task; it asks in its notes when it finishes. `send_input`

@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gregwhitaker/dotshift/internal/config"
 	"github.com/gregwhitaker/dotshift/internal/mcpintake"
@@ -60,7 +61,7 @@ func init() {
 			if err != nil {
 				return err
 			}
-			printConnect(cfg, passcode)
+			printConnect(ctx, cfg, passcode)
 			registered, connected, err := store.Clients(ctx)
 			if err != nil {
 				return err
@@ -70,25 +71,44 @@ func init() {
 		})
 }
 
-func printConnect(cfg *config.Config, passcode string) {
+func printConnect(ctx context.Context, cfg *config.Config, passcode string) {
 	if cfg.MCP.Disabled {
 		fmt.Println("Note: the MCP intake is off (mcp.disabled), so `dotshift serve` won't start it.")
 	}
 	_, port, _ := net.SplitHostPort(cfg.MCP.Listen)
-	local := "http://" + cfg.MCP.Listen
 	mcpURL := "https://<your tunnel host>/mcp"
 	if cfg.MCP.PublicURL != "" {
 		mcpURL = cfg.MCP.PublicURL + "/mcp"
 	}
-	fmt.Printf(`dotshift's MCP intake runs inside `+"`dotshift serve`"+` at %s.
 
-1. Give it a public https URL with a tunnel (pick one):
-     cloudflared tunnel --url %s
-     tailscale funnel %s
-     ngrok http %s
-   Only this endpoint goes through the tunnel; the router stays on this machine.
+	fmt.Printf("dotshift's MCP intake runs inside `dotshift serve` at http://%s.\n\n", cfg.MCP.Listen)
+	if cfg.MCP.Tunnel == config.TunnelTailscale {
+		_, url, err := findFunnel(ctx)
+		if cfg.MCP.PublicURL == "" {
+			mcpURL = "https://<machine>.<tailnet>.ts.net/mcp"
+			if err == nil {
+				mcpURL = url + "/mcp"
+			}
+		}
+		fmt.Printf(`1. %s starts Tailscale Funnel for you, which serves it at
+   this machine's https://<machine>.<tailnet>.ts.net name. Only this endpoint
+   goes on the internet; the router stays on this machine. Once per machine:
+     - Install Tailscale and log in (tailscale up).
+     - Allow Funnel: run "tailscale funnel %s" once. If Funnel isn't on for
+       your tailnet yet, it prints a link to turn it on; then press Ctrl-C.
+`, "`dotshift serve`", port)
+		if err != nil {
+			fmt.Printf("   Not ready yet: %v\n", err)
+		} else {
+			fmt.Printf("   Tailscale is up. Check it while serve runs: curl %s/healthz\n", strings.TrimSuffix(mcpURL, "/mcp"))
+		}
+	} else {
+		fmt.Printf(`1. Point your tunnel at http://%s (mcp.tunnel is none). Only this
+   endpoint should go through it; the router stays on this machine.
    Check it with: curl https://<your tunnel host>/healthz
-
+`, cfg.MCP.Listen)
+	}
+	fmt.Printf(`
 2. In ChatGPT: Settings > Apps & Connectors > Advanced settings, turn on
    Developer mode. Then Settings > Apps & Connectors > Create:
      MCP server URL:  %s
@@ -97,5 +117,5 @@ func printConnect(cfg *config.Config, passcode string) {
 3. ChatGPT opens dotshift's approval page. Enter this passcode to allow it:
 
      %s
-`, local, local, port, port, mcpURL, passcode)
+`, mcpURL, passcode)
 }

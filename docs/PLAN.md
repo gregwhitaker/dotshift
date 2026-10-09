@@ -93,7 +93,7 @@ The dot calls dotshift directly over MCP. Intake is a small interface, so MCP is
 
 **Reaching your machine**
 
-ChatGPT only connects to remote MCP servers ([OpenAI help](https://help.openai.com/en/articles/12584461-developer-mode-apps-and-full-mcp-connectors-in-chatgpt-beta)). dotshift exposes only its MCP endpoint through a tunnel you pick (Cloudflare Tunnel, Tailscale Funnel or ngrok), protected by OAuth. The router stays on localhost.
+ChatGPT only connects to remote MCP servers ([OpenAI help](https://help.openai.com/en/articles/12584461-developer-mode-apps-and-full-mcp-connectors-in-chatgpt-beta)). dotshift exposes only its MCP endpoint through Tailscale Funnel (your pick, 2026-10-09), protected by OAuth. The router stays on localhost.
 
 **Intake adapters**
 
@@ -137,7 +137,7 @@ Milestone 2 is the gate for the MCP work: it proves your dot will call a custom 
 1. **Router MVP with LiteLLM.** `dotshift serve` starts LiteLLM Proxy, which exposes `/v1/chat/completions` and `/v1/responses` with OpenAI, Anthropic, Gemini and Ollama behind aliases. Done when Codex CLI completes a small coding task through it on each provider. *Status: code in PR #2; awaiting a run with real keys.*
 2. **MCP spike (gate).** A stub MCP server with `ping` and a `start_task` that only logs, behind a tunnel with OAuth. Done when your dot calls both from ChatGPT.
 3. **Job runner.** Intake interface, worktree per job, Codex CLI launched against the router, status stored in SQLite. Usable from a `dotshift run` CLI.
-4. **MCP intake v1.** All six tools wired to the job runner, plus the repo allowlist. *Status: code in a draft PR stacked on the job runner; `dotshift serve` runs it behind OAuth with a passcode approval page. `send_input` follows up on a finished task on the same branch, since Codex runs non-interactively. Awaiting a run from ChatGPT through a tunnel.*
+4. **MCP intake v1.** All six tools wired to the job runner, plus the repo allowlist. *Status: code in a draft PR stacked on the job runner; `dotshift serve` runs it behind OAuth with a passcode approval page. `send_input` follows up on a finished task on the same branch, since Codex runs non-interactively. The tunnel is Tailscale Funnel, which `dotshift serve` runs itself (your pick, 2026-10-09). Awaiting a run from ChatGPT.*
 5. **Routing polish.** Per-task model choice, a cost and usage view, and per-model smoke tests. (Fallback chains already shipped in milestone 1.)
 
 ## Open questions and risks
@@ -145,7 +145,7 @@ Milestone 2 is the gate for the MCP work: it proves your dot will call a custom 
 The biggest risk is the ChatGPT plan. OpenAI's help page lists full MCP with write actions for Business, Enterprise and Edu, and read/fetch only for individual plans. That page doesn't mention dots, so milestone 2 tests it directly.
 
 - [ ] If the dot won't call `start_task`, is it acceptable to present it as a read-style tool, or to upgrade the plan?
-- [ ] Which tunnel do you already use, if any?
+- [x] Which tunnel do you already use, if any? Tailscale Funnel.
 - [ ] Should dotshift push branches, or only leave local branches for you?
 - [ ] Which repos should be on the allowlist first?
 

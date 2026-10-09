@@ -94,8 +94,9 @@ func baseURL(r *http.Request) string {
 	return base
 }
 
-// requestBase works out the URL a request came in on. With a public URL
-// configured, only that host and this machine's own names are accepted.
+// requestBase works out the URL clients reach dotshift at. With a public URL
+// configured, it is always that URL, and only requests for its host or this
+// machine's own names are served (a tunnel may forward either).
 func requestBase(r *http.Request, public *url.URL) (string, bool) {
 	host := r.Host
 	if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
@@ -109,12 +110,10 @@ func requestBase(r *http.Request, public *url.URL) (string, bool) {
 		hostname = h
 	}
 	if public != nil {
-		if strings.EqualFold(host, public.Host) {
-			return public.String(), true
-		}
-		if !isLoopback(strings.Trim(hostname, "[]")) {
+		if !strings.EqualFold(host, public.Host) && !isLoopback(strings.Trim(hostname, "[]")) {
 			return "", false
 		}
+		return public.String(), true
 	}
 	scheme := "http"
 	if r.TLS != nil {
