@@ -4,10 +4,13 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -23,7 +26,89 @@ type Config struct {
 	// list of models. The first model serves the request; the rest are
 	// fallbacks tried in order when it fails.
 	Aliases map[string][]string `yaml:"aliases"`
+	// Repos is the allowlist of repositories jobs may run in, keyed by a short
+	// name intakes use to refer to them.
+	Repos map[string]Repo `yaml:"repos"`
+	Jobs  Jobs            `yaml:"jobs"`
+	MCP   MCP             `yaml:"mcp"`
 }
+
+// MCP controls the MCP intake `dotshift serve` runs: the endpoint your dot
+// (or any MCP client) calls through a tunnel to start and follow jobs.
+type MCP struct {
+	// Disabled turns the MCP intake off.
+	Disabled bool `yaml:"disabled"`
+	// Listen is the local address the MCP endpoint serves on. Point your
+	// tunnel here.
+	Listen string `yaml:"listen"`
+	// Tunnel is how ChatGPT reaches the endpoint. "tailscale" (the default)
+	// has `dotshift serve` run Tailscale Funnel, which serves it at this
+	// machine's https://<machine>.<tailnet>.ts.net name. "none" leaves the
+	// tunnel to you.
+	Tunnel string `yaml:"tunnel"`
+	// PublicURL is the https URL clients reach the endpoint at. Requests for
+	// any other host are refused. With the Tailscale tunnel it defaults to the
+	// Funnel URL; with none and no public_url, dotshift takes the URL from
+	// each request, as the tunnel forwarded it.
+	PublicURL string `yaml:"public_url"`
+	// PasscodeEnv names an environment variable holding the passcode you type
+	// to approve a client. Empty means dotshift generates one and stores it
+	// in .dotshift/mcp_passcode next to this config.
+	PasscodeEnv string `yaml:"passcode_env"`
+}
+
+// Repo is one repository jobs are allowed to work in.
+type Repo struct {
+	// Path is the repository's working copy. A leading ~ is the home folder.
+	Path string `yaml:"path"`
+	// Test is an optional shell command run in the job's worktree after the
+	// agent finishes, e.g. "go test ./...". Its result is recorded on the job.
+	Test string `yaml:"test"`
+}
+
+// Jobs controls how coding jobs run.
+type Jobs struct {
+	// Model is the alias jobs use when the request doesn't name one.
+	Model string `yaml:"model"`
+	// Timeout stops a job's agent after this long, e.g. "45m".
+	Timeout Duration `yaml:"timeout"`
+	// WorktreeDir is where job worktrees are created. Defaults to
+	// .dotshift/worktrees next to the config file.
+	WorktreeDir string `yaml:"worktree_dir"`
+	Agent       Agent  `yaml:"agent"`
+}
+
+// Agent selects the coding agent jobs run.
+type Agent struct {
+	// Name is the agent type. Only "codex" exists today.
+	Name string `yaml:"name"`
+	// Command is the agent binary, if not the default on PATH.
+	Command string `yaml:"command"`
+	// Args are extra arguments passed to the agent on every job.
+	Args []string `yaml:"args"`
+}
+
+// Duration is a time.Duration written in YAML as "30m" or "1h".
+type Duration struct{ time.Duration }
+
+// UnmarshalYAML parses a Go duration string.
+func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
+	v, err := time.ParseDuration(n.Value)
+	if err != nil {
+		return fmt.Errorf("line %d: %q is not a duration like 30m or 1h", n.Line, n.Value)
+	}
+	d.Duration = v
+	return nil
+}
+
+// Values of mcp.tunnel.
+const (
+	TunnelTailscale = "tailscale"
+	TunnelNone      = "none"
+)
+
+// KnownAgents are the coding agents dotshift can launch.
+var KnownAgents = map[string]bool{"codex": true}
 
 // Router controls how the LiteLLM proxy container is run.
 type Router struct {
@@ -104,6 +189,29 @@ func (c *Config) applyDefaults() {
 	if c.Router.Container == "" {
 		c.Router.Container = "dotshift-litellm"
 	}
+	if c.Jobs.Model == "" {
+		if _, ok := c.Aliases["smart"]; ok {
+			c.Jobs.Model = "smart"
+		} else if names := c.AliasNames(); len(names) > 0 {
+			c.Jobs.Model = names[0]
+		}
+	}
+	if c.Jobs.Timeout.Duration == 0 {
+		c.Jobs.Timeout.Duration = time.Hour
+	}
+	if c.Jobs.Agent.Name == "" {
+		c.Jobs.Agent.Name = "codex"
+	}
+	if c.Jobs.Agent.Command == "" {
+		c.Jobs.Agent.Command = c.Jobs.Agent.Name
+	}
+	if c.MCP.Listen == "" {
+		c.MCP.Listen = "127.0.0.1:8787"
+	}
+	if c.MCP.Tunnel == "" {
+		c.MCP.Tunnel = TunnelTailscale
+	}
+	c.MCP.PublicURL = strings.TrimRight(c.MCP.PublicURL, "/")
 }
 
 // Validate reports every problem in the config at once.
@@ -145,6 +253,38 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	if _, ok := c.Aliases[c.Jobs.Model]; !ok && len(c.Aliases) > 0 {
+		errs = append(errs, fmt.Sprintf("jobs.model %q is not one of the aliases", c.Jobs.Model))
+	}
+	if c.Jobs.Timeout.Duration < 0 {
+		errs = append(errs, "jobs.timeout must be positive")
+	}
+	if !KnownAgents[c.Jobs.Agent.Name] {
+		errs = append(errs, fmt.Sprintf("jobs.agent.name %q is not a known agent (codex)", c.Jobs.Agent.Name))
+	}
+	for _, name := range c.RepoNames() {
+		if !aliasPattern.MatchString(name) {
+			errs = append(errs, fmt.Sprintf("repos.%s: names must be lowercase letters, digits, - or _", name))
+		}
+		if c.Repos[name].Path == "" {
+			errs = append(errs, fmt.Sprintf("repos.%s.path is required", name))
+		}
+	}
+	if _, port, err := net.SplitHostPort(c.MCP.Listen); err != nil || port == "" {
+		errs = append(errs, fmt.Sprintf("mcp.listen %q must look like host:port, e.g. 127.0.0.1:8787", c.MCP.Listen))
+	}
+	if c.MCP.PublicURL != "" {
+		u, err := url.Parse(c.MCP.PublicURL)
+		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || (u.Path != "" && u.Path != "/") || u.RawQuery != "" {
+			errs = append(errs, fmt.Sprintf("mcp.public_url %q must be a URL with no path, like https://dotshift.example.com", c.MCP.PublicURL))
+		}
+	}
+	if c.MCP.Tunnel != TunnelTailscale && c.MCP.Tunnel != TunnelNone {
+		errs = append(errs, fmt.Sprintf("mcp.tunnel %q must be tailscale or none", c.MCP.Tunnel))
+	}
+	if c.MCP.PasscodeEnv != "" && !envPattern.MatchString(c.MCP.PasscodeEnv) {
+		errs = append(errs, fmt.Sprintf("mcp.passcode_env %q is not a valid environment variable name", c.MCP.PasscodeEnv))
+	}
 	if len(errs) > 0 {
 		return fmt.Errorf("invalid config:\n  - %s", strings.Join(errs, "\n  - "))
 	}
@@ -185,4 +325,14 @@ func SplitModel(m string) (provider, model string, ok bool) {
 		return "", "", false
 	}
 	return provider, model, true
+}
+
+// RepoNames returns the allowlisted repo names in a stable order.
+func (c *Config) RepoNames() []string {
+	names := make([]string, 0, len(c.Repos))
+	for n := range c.Repos {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }
