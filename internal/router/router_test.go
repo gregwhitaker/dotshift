@@ -36,6 +36,22 @@ func TestRunArgs(t *testing.T) {
 	}
 }
 
+func TestRunArgsWithUsage(t *testing.T) {
+	c, err := config.Parse([]byte("providers:\n  openai: {}\naliases:\n  smart: [openai/gpt-5]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := New(c, "x", "k")
+	r.SendUsage("http://host.docker.internal:5555/usage", "tok-secret")
+	args := strings.Join(r.RunArgs(), " ")
+	if !strings.Contains(args, "--env GENERIC_LOGGER_ENDPOINT --env GENERIC_LOGGER_HEADERS ") {
+		t.Errorf("usage env missing:\n%s", args)
+	}
+	if strings.Contains(args, "tok-secret") {
+		t.Error("usage token on the docker command line")
+	}
+}
+
 func TestMissingEnv(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	c, err := config.Parse([]byte("providers:\n  openai: {api_key_env: OPENAI_API_KEY}\naliases:\n  smart: [openai/gpt-5]\n"))

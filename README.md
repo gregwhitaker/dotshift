@@ -38,6 +38,8 @@ and follows the router's logs.
 | `dotshift serve` | Generates the LiteLLM config, starts the container, waits until it's healthy, starts the MCP intake (see [Connecting your dot](#connecting-your-dot-mcp)), then follows the router's logs |
 | `dotshift status` | Shows whether the router is up and which models it serves |
 | `dotshift stop` | Removes the router container |
+| `dotshift check [ALIAS...]` | Sends a short chat request and a tool-call request to every model behind each alias, fallbacks included, and reports pass or fail |
+| `dotshift usage [PERIOD]` | Shows requests, failures, tokens and cost per alias and model, for all time or a period like `24h` or `7d` |
 | `dotshift key` | Prints the API key clients send to the router |
 | `dotshift litellm-config` | Prints the LiteLLM config generated from `dotshift.yaml` |
 | `dotshift connect` | Shows how to connect ChatGPT and the passcode that approves it; `-revoke` disconnects every client |
@@ -87,6 +89,46 @@ aliases:
   prints it. Set `router.master_key_env` to use your own instead.
 
 Generated files live in `.dotshift/` next to `dotshift.yaml`.
+
+## Checking models
+
+`dotshift check` tests each model on its own, with fallbacks turned off, so a
+broken primary can't hide behind a working fallback. Each model gets two
+requests: a one-word chat, and a request that must come back as a call to a
+test tool, since coding agents can't work with a model that won't call tools.
+It exits non-zero if any model fails, and both requests count toward usage.
+
+```
+$ dotshift check
+ALIAS  MODEL                        ROLE        CHAT     TOOLS
+fast   anthropic/claude-haiku-4-5   primary     ok 0.8s  ok 1.1s
+smart  anthropic/claude-sonnet-5-5  primary     ok 1.4s  ok 1.9s
+smart  openai/gpt-5                 fallback 1  FAIL     FAIL
+
+Failures:
+  openai/gpt-5 chat: 401 Unauthorized: AuthenticationError: Incorrect API key provided
+```
+
+## Usage and cost
+
+While `dotshift serve` runs, the router reports every call (alias, model,
+tokens, cost, and the error if it failed) to dotshift, which appends it to
+`.dotshift/usage.jsonl`. Prompts and responses are not recorded. Costs are
+LiteLLM's list-price estimates, not your provider's bill.
+
+```
+$ dotshift usage 7d
+ALIAS  MODEL                        REQUESTS  FAILED  INPUT TOKENS  OUTPUT TOKENS  COST (USD)
+smart  anthropic/claude-sonnet-5-5  212       3       1843302       61022          6.45
+smart  openai/gpt-5                 3         0       30114         1290           0.05
+total                               215       3       1873416       62312          6.50
+```
+
+This uses LiteLLM's `generic_api` logging callback, so it needs no database.
+dotshift listens where the container can reach it: on loopback with Docker
+Desktop, and on the Docker bridge address on Linux. If that doesn't work on
+your machine, `serve` warns and carries on without usage; set
+`router.usage_listen` to an address that works, or to `off`.
 
 ## Using it from Codex CLI
 

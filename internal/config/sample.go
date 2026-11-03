@@ -14,6 +14,10 @@ router:
   # Clients authenticate with a key dotshift generates (run: dotshift key).
   # Uncomment to use a key from your environment instead.
   # master_key_env: DOTSHIFT_MASTER_KEY
+  # The router reports each call's tokens and cost to dotshift, which keeps
+  # them in .dotshift/usage.jsonl (see: dotshift usage). Set to off to stop,
+  # or to an IP address if the container can't reach the one dotshift picks.
+  # usage_listen: off
 
 # API keys are read from these environment variables when dotshift starts.
 # They are passed to the router container by name and never written to disk.

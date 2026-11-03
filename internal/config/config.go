@@ -123,7 +123,18 @@ type Router struct {
 	// send as their API key. Empty means dotshift generates one and stores it
 	// in .dotshift/master_key next to this config.
 	MasterKeyEnv string `yaml:"master_key_env"`
+	// UsageListen is the host address `dotshift serve` listens on for the
+	// router's per-call usage records. Empty picks one that the container can
+	// reach (loopback with Docker Desktop, the Docker bridge on Linux); "off"
+	// turns usage recording off.
+	UsageListen string `yaml:"usage_listen"`
 }
+
+// UsageOff is the router.usage_listen value that turns usage recording off.
+const UsageOff = "off"
+
+// UsageEnabled reports whether the router should send usage records.
+func (r Router) UsageEnabled() bool { return r.UsageListen != UsageOff }
 
 // Provider holds connection settings for one model provider.
 type Provider struct {
@@ -222,6 +233,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Router.MasterKeyEnv != "" && !envPattern.MatchString(c.Router.MasterKeyEnv) {
 		errs = append(errs, fmt.Sprintf("router.master_key_env %q is not a valid environment variable name", c.Router.MasterKeyEnv))
+	}
+	if l := c.Router.UsageListen; l != "" && l != UsageOff && net.ParseIP(l) == nil {
+		errs = append(errs, fmt.Sprintf("router.usage_listen %q must be an IP address or %q", l, UsageOff))
 	}
 	for name, p := range c.Providers {
 		if !KnownProviders[name] {

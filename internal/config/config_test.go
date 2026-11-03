@@ -46,6 +46,7 @@ func TestValidationErrors(t *testing.T) {
 		{"bad alias name", "providers:\n  openai: {}\naliases:\n  Smart: [openai/gpt-5]\n", "aliases.Smart"},
 		{"bad env name", "providers:\n  openai: {api_key_env: 'my key'}\naliases:\n  a: [openai/gpt-5]\n", "not a valid environment variable"},
 		{"bad port", "router: {port: 70000}\nproviders:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\n", "out of range"},
+		{"bad usage_listen", "router: {usage_listen: localhost}\nproviders:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\n", "router.usage_listen"},
 		{"job model not an alias", "providers:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\njobs: {model: b}\n", `jobs.model "b"`},
 		{"bad timeout", "providers:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\njobs: {timeout: soon}\n", "not a duration"},
 		{"unknown agent", "providers:\n  openai: {}\naliases:\n  a: [openai/gpt-5]\njobs: {agent: {name: aider}}\n", "not a known agent"},

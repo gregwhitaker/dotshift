@@ -39,7 +39,16 @@ type LiteLLMSettings struct {
 	// Fallbacks maps a model name to the model names tried after it fails.
 	Fallbacks  []map[string][]string `yaml:"fallbacks,omitempty"`
 	DropParams bool                  `yaml:"drop_params"`
+	// Callbacks are LiteLLM logging integrations. dotshift uses generic_api to
+	// receive usage records (see package usage).
+	Callbacks []string `yaml:"callbacks,omitempty"`
+	// TurnOffMessageLogging keeps prompts and responses out of callbacks.
+	TurnOffMessageLogging bool `yaml:"turn_off_message_logging,omitempty"`
 }
+
+// UsageCallback is the LiteLLM callback that posts usage records to
+// GENERIC_LOGGER_ENDPOINT.
+const UsageCallback = "generic_api"
 
 // FallbackName is the model name given to the nth model (1-based) after an
 // alias's primary, e.g. "smart~1". Clients normally only call the alias.
@@ -53,6 +62,10 @@ func FallbackName(alias string, n int) string {
 // LITELLM_MASTER_KEY environment variable instead (see package router).
 func Build(c *config.Config) Document {
 	doc := Document{LiteLLMSettings: LiteLLMSettings{DropParams: true}}
+	if c.Router.UsageEnabled() {
+		doc.LiteLLMSettings.Callbacks = []string{UsageCallback}
+		doc.LiteLLMSettings.TurnOffMessageLogging = true
+	}
 	for _, alias := range c.AliasNames() {
 		models := c.Aliases[alias]
 		var fallbacks []string

@@ -26,6 +26,8 @@ Usage:
   dotshift serve    [-config FILE]   start the router, job runner and MCP intake (Ctrl-C stops them)
   dotshift status   [-config FILE]   show whether the router is up and which models it serves
   dotshift stop     [-config FILE]   stop the router
+  dotshift check    [-config FILE] [ALIAS...]   test chat and tool calls on every model behind each alias
+  dotshift usage    [-config FILE] [PERIOD]     show requests, tokens and cost per alias and model (e.g. 7d)
   dotshift key      [-config FILE]   print the API key clients send to the router
   dotshift litellm-config [-config FILE]   print the generated LiteLLM config
   dotshift connect  [-revoke] [-new-passcode]
@@ -67,6 +69,10 @@ func main() {
 		err = runStatus(ctx, *path)
 	case "stop":
 		err = runStop(ctx, *path)
+	case "check":
+		err = runCheck(ctx, *path, fs.Args())
+	case "usage":
+		err = runUsage(*path, fs.Args())
 	case "key":
 		err = runKey(*path)
 	case "litellm-config":
@@ -139,6 +145,8 @@ func runServe(ctx context.Context, path string) error {
 	if missing := r.MissingEnv(); len(missing) > 0 {
 		fmt.Fprintf(os.Stderr, "warning: not set, models using them will fail: %s\n", strings.Join(missing, ", "))
 	}
+	stopUsage := startUsage(ctx, path, cfg, r)
+	defer stopUsage()
 	fmt.Printf("Starting router (%s)...\n", cfg.Router.Image)
 	if err := r.Start(ctx); err != nil {
 		return err
