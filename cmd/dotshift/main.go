@@ -23,13 +23,23 @@ const usage = `dotshift: a local model router for coding agents
 
 Usage:
   dotshift init     [-config FILE]   write a starter dotshift.yaml
-  dotshift serve    [-config FILE]   start the router and follow its logs (Ctrl-C stops it)
+  dotshift serve    [-config FILE]   start the router, job runner and MCP intake (Ctrl-C stops them)
   dotshift status   [-config FILE]   show whether the router is up and which models it serves
   dotshift stop     [-config FILE]   stop the router
   dotshift check    [-config FILE] [ALIAS...]   test chat and tool calls on every model behind each alias
   dotshift usage    [-config FILE] [PERIOD]     show requests, tokens and cost per alias and model (e.g. 7d)
   dotshift key      [-config FILE]   print the API key clients send to the router
   dotshift litellm-config [-config FILE]   print the generated LiteLLM config
+  dotshift connect  [-revoke] [-new-passcode]
+                                   show how to connect ChatGPT, and the approval passcode
+
+Jobs (the router must be running):
+  dotshift run [-repo NAME] [-model ALIAS] [-branch NAME] [-base REF] INSTRUCTIONS
+                                   run a coding job in a new worktree and wait for it
+  dotshift jobs [ID]               list jobs, or show one job's result
+  dotshift logs ID                 print a job's agent output
+  dotshift cancel ID               stop a running job
+  dotshift clean ID                remove the worktree a failed or cancelled job left
 `
 
 func main() {
@@ -38,6 +48,9 @@ func main() {
 		os.Exit(2)
 	}
 	cmd, args := os.Args[1], os.Args[2:]
+	if c, ok := commands[cmd]; ok {
+		os.Exit(c(args))
+	}
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	path := fs.String("config", config.DefaultPath, "path to dotshift.yaml")
 	force := fs.Bool("force", false, "init: overwrite an existing config")
@@ -150,6 +163,12 @@ func runServe(ctx context.Context, path string) error {
 		return err
 	}
 	fmt.Printf("\nRouter is up at %s\nAliases: %s\n\n", r.BaseURL(), strings.Join(cfg.AliasNames(), ", "))
+	stopIntake, err := startIntake(path, cfg, r)
+	if err != nil {
+		return err
+	}
+	defer stopIntake()
+	fmt.Println()
 	fmt.Print(codexSnippet(r.BaseURL(), cfg))
 	fmt.Println("\nFollowing router logs. Press Ctrl-C to stop.")
 	if err := r.Logs(ctx, os.Stdout); err != nil && ctx.Err() == nil {

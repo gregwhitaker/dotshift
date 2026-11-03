@@ -43,4 +43,30 @@ aliases:
     - gemini/gemini-2.5-pro
   local:
     - ollama_chat/qwen2.5-coder
+
+# Repositories jobs may work in. Jobs never touch these working copies: each
+# job gets its own git worktree on a new branch.
+repos: {}
+#  myapp:
+#    path: ~/code/myapp
+#    test: go test ./...   # optional; run after the agent, result kept on the job
+
+jobs:
+  model: smart            # alias used when a job doesn't ask for one
+  timeout: 1h
+  agent:
+    name: codex           # Codex CLI, run as: codex exec ...
+    # command: /usr/local/bin/codex
+    # args: ["--sandbox", "workspace-write"]
+
+# The MCP endpoint your OpenAI dot (or any MCP client) calls to start and
+# follow jobs. "dotshift serve" runs it; "dotshift connect" shows how to
+# reach it through a tunnel and the passcode that approves a client.
+mcp:
+  listen: 127.0.0.1:8787
+  # "dotshift serve" runs Tailscale Funnel, which serves the endpoint at
+  # https://<machine>.<tailnet>.ts.net/mcp. Use "none" to run your own tunnel.
+  tunnel: tailscale
+  # public_url: https://dotshift.example.com   # the URL clients use, if not Funnel's
+  # disabled: true
 `
