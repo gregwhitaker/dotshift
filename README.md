@@ -1,3 +1,10 @@
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/svg/dotshift-logo-dark.svg">
+    <img alt="dotshift" src="brand/svg/dotshift-logo-light.svg" height="56">
+  </picture>
+</p>
+
 # dotshift
 
 dotshift is a local coding service your OpenAI dot (or any MCP client) calls
