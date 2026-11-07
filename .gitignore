@@ -1,3 +1,6 @@
 /dotshift
 .dotshift/
 dotshift.yaml
+/web/node_modules/
+/web/.vite/
+/bin/
