@@ -663,3 +663,7 @@ goals for recovery on the next start.
 go test ./...
 go build ./cmd/dotshift
 ```
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
