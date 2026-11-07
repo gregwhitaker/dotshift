@@ -71,6 +71,14 @@ func startIntake(configPath string, cfg *config.Config, r *router.Router) (func(
 		closeAll()
 		return nil, fmt.Errorf("MCP intake: %w (change mcp.listen, or set mcp.disabled)", err)
 	}
+	if err := runner.ResumeGoals(context.Background()); err != nil {
+		ln.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		runner.Shutdown(ctx, "goal recovery failed")
+		closeAll()
+		return nil, fmt.Errorf("resuming project goals: %w", err)
+	}
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {

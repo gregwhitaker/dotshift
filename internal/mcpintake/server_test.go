@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func (a shellAgent) Name() string { return "shell" }
 func (a shellAgent) Command(ctx context.Context, t agent.Task) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "sh", "-c", a.script)
 	cmd.Dir = t.Dir
-	cmd.Env = append(os.Environ(), "SUMMARY="+t.LastMessageFile)
+	cmd.Env = append(os.Environ(), "SUMMARY="+t.LastMessageFile, "READ_ONLY="+strconv.FormatBool(t.ReadOnly))
 	return cmd
 }
 
@@ -212,12 +213,13 @@ func TestToolsOverOAuth(t *testing.T) {
 			for _, tool := range tools.Tools {
 				names = append(names, tool.Name)
 			}
-			if got := strings.Join(names, ","); got != "cancel_task,list_repos,send_input,start_task,task_result,task_status" {
+			if got := strings.Join(names, ","); got != "cancel_task,create_project,list_repos,list_strategies,register_project,resume_goal,send_input,start_goal,start_task,task_result,task_status" {
 				t.Fatalf("tools = %s", got)
 			}
 
 			repos, _ := call(t, cs, "list_repos", nil)
-			if fmt.Sprint(repos["repos"]) != "[map[has_tests:true name:demo]]" || repos["default_model"] != "smart" {
+			entries := repos["repos"].([]any)
+			if len(entries) != 1 || entries[0].(map[string]any)["name"] != "demo" || entries[0].(map[string]any)["has_tests"] != true || repos["default_model"] != "smart" {
 				t.Fatalf("list_repos = %v", repos)
 			}
 
@@ -286,6 +288,158 @@ func TestCancelOverMCP(t *testing.T) {
 	}
 	if st := waitFinished(t, cs, id); st["status"] != "cancelled" {
 		t.Fatalf("after cancel_task = %v", st)
+	}
+}
+
+func TestAutonomousGoalOverOAuth(t *testing.T) {
+	const script = `cat > /dev/null
+if [ "$READ_ONLY" != true ]; then
+  if [ -f hello.txt ]; then echo fixed > hello.txt; else echo broken > hello.txt; fi
+fi
+printf '%s' '{"status":"complete","summary":"Implemented the project goal.","next_steps":""}' > "$SUMMARY"`
+	for _, limit := range []int{0, 1} {
+		t.Run(fmt.Sprintf("iteration limit %d", limit), func(t *testing.T) {
+			runner := newRunner(t, script)
+			repo := runner.Config.Repos["demo"]
+			repo.Test = `test "$(cat hello.txt)" = fixed`
+			runner.Config.Repos["demo"] = repo
+			t.Cleanup(func() { runner.Shutdown(context.Background(), "test finished") })
+			srv, _ := newTestServer(t, runner, "")
+			cs := connect(t, srv, "none")
+			started, msg := call(t, cs, "start_goal", map[string]any{"goal": "Make hello.txt say fixed", "max_iterations": limit})
+			if msg != "" {
+				t.Fatal(msg)
+			}
+			id := started["task_id"].(string)
+			status := waitFinished(t, cs, id)
+			if limit == 1 {
+				if status["status"] != "blocked" || status["waiting_for_input"] != true || status["tests"] != "failed" {
+					t.Fatalf("goal should be blocked: %v", status)
+				}
+				// Wait for the finished worker to release its in-process entry.
+				if _, err := runner.Wait(context.Background(), id); err != nil {
+					t.Fatal(err)
+				}
+				resumed, msg := call(t, cs, "resume_goal", map[string]any{
+					"task_id": id, "input": "Fix the failing test", "model": "fast", "max_iterations": 0,
+				})
+				if msg != "" || resumed["task_id"] != id || resumed["model"] != "fast" {
+					t.Fatalf("resume_goal = %v, %s", resumed, msg)
+				}
+				status = waitFinished(t, cs, id)
+			}
+			if status["status"] != "done" {
+				t.Fatalf("goal = %v", status)
+			}
+			result, msg := call(t, cs, "task_result", map[string]any{"task_id": id, "include_diff": true})
+			if msg != "" || result["tests"] != "passed" || result["commits"] != 2.0 || !strings.Contains(fmt.Sprint(result["diff"]), "+fixed") {
+				t.Fatalf("goal result = %v, %s", result, msg)
+			}
+			progress := result["goal"].(map[string]any)
+			if progress["iterations"] != 2.0 || progress["phase"] != "reviewing" {
+				t.Fatalf("goal progress = %v", progress)
+			}
+		})
+	}
+}
+
+func TestGoalStrategyDiscoveryAndResumeOverOAuth(t *testing.T) {
+	const unfinished = `cat > /dev/null; echo fixed > hello.txt; printf '%s' '{"status":"continue","summary":"Made progress.","next_steps":"Finish the last requirement."}' > "$SUMMARY"`
+	const finished = `cat > /dev/null; printf '%s' '{"status":"complete","summary":"All requirements verified.","next_steps":""}' > "$SUMMARY"`
+	runner := newRunner(t, unfinished)
+	runner.Config.Providers["anthropic"] = config.Provider{}
+	runner.Config.Aliases["smart"] = []string{"anthropic/claude", "openai/gpt-5"}
+	t.Cleanup(func() { runner.Shutdown(context.Background(), "test finished") })
+	srv, _ := newTestServer(t, runner, "")
+	cs := connect(t, srv, "none")
+	catalog, msg := call(t, cs, "list_strategies", nil)
+	if msg != "" || catalog["default_strategy"] != "alias" {
+		t.Fatalf("catalog = %v, %s", catalog, msg)
+	}
+	policies := catalog["strategies"].([]any)
+	preferred := policies[1].(map[string]any)
+	pools := preferred["aliases"].([]any)
+	if preferred["name"] != "prefer_openai" || len(pools) != 1 {
+		t.Fatalf("policies = %v", policies)
+	}
+	pool := pools[0].(map[string]any)
+	models := pool["models"].([]any)
+	if pool["alias"] != "smart" || models[0].(map[string]any)["provider"] != "openai" || models[0].(map[string]any)["route"] != "smart~1" {
+		t.Fatalf("wrong eligible model order = %v", pool)
+	}
+	if _, msg := call(t, cs, "start_goal", map[string]any{"goal": "Finish", "strategy": "invented"}); !strings.Contains(msg, "unknown strategy") {
+		t.Fatalf("invalid strategy: %q", msg)
+	}
+	started, msg := call(t, cs, "start_goal", map[string]any{"goal": "Finish all requirements", "strategy": "prefer_openai", "max_iterations": 1})
+	if msg != "" {
+		t.Fatal(msg)
+	}
+	id := started["task_id"].(string)
+	status := waitFinished(t, cs, id)
+	if status["status"] != "blocked" {
+		t.Fatalf("goal = %v", status)
+	}
+	if _, err := runner.Wait(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	selection := status["goal"].(map[string]any)["model_selection"].(map[string]any)
+	if selection["strategy"] != "prefer_openai" || selection["active_model"] != "openai/gpt-5" || selection["reason"] == "" {
+		t.Fatalf("selection = %v", selection)
+	}
+	runner.Agent = shellAgent{finished}
+	resumed, msg := call(t, cs, "resume_goal", map[string]any{"task_id": id, "strategy": "prefer_openai", "retry_unavailable": true, "max_iterations": 0})
+	if msg != "" || resumed["task_id"] != id {
+		t.Fatalf("resume = %v, %s", resumed, msg)
+	}
+	if status := waitFinished(t, cs, id); status["status"] != "done" {
+		t.Fatalf("resumed goal = %v", status)
+	}
+}
+
+func TestAdaptiveReviewAndBudgetControlsOverOAuth(t *testing.T) {
+	const unfinished = `cat > /dev/null; echo fixed > hello.txt; printf '%s' '{"status":"continue","summary":"Made progress.","next_steps":"Finish the last requirement."}' > "$SUMMARY"`
+	const finished = `cat > /dev/null; printf '%s' '{"status":"complete","summary":"All requirements verified.","next_steps":""}' > "$SUMMARY"`
+	runner := newRunner(t, unfinished)
+	runner.Config.Providers["anthropic"] = config.Provider{}
+	runner.Config.Aliases["smart"] = []string{"openai/gpt-test", "anthropic/claude-test"}
+	t.Cleanup(func() { runner.Shutdown(context.Background(), "test finished") })
+	srv, _ := newTestServer(t, runner, "")
+	cs := connect(t, srv, "none")
+	catalog, msg := call(t, cs, "list_strategies", nil)
+	if msg != "" || len(catalog["strategies"].([]any)) != 3 || catalog["default_escalate_after"] != 2.0 || catalog["default_max_cost_usd"] != 0.0 {
+		t.Fatalf("catalog %v, %s", catalog, msg)
+	}
+	for _, bad := range []map[string]any{
+		{"goal": "Finish", "max_cost_usd": -1},
+		{"goal": "Finish", "strategy": "adaptive", "reviewer_model": "missing"},
+		{"goal": "Finish", "escalate_after": 2},
+	} {
+		if _, msg := call(t, cs, "start_goal", bad); msg == "" {
+			t.Fatalf("accepted %v", bad)
+		}
+	}
+	started, msg := call(t, cs, "start_goal", map[string]any{"goal": "Finish", "strategy": "adaptive", "reviewer_model": "auto", "escalate_after": 3, "max_cost_usd": 1.25, "max_iterations": 1})
+	if msg != "" {
+		t.Fatal(msg)
+	}
+	id := started["task_id"].(string)
+	status := waitFinished(t, cs, id)
+	if _, err := runner.Wait(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	goal := status["goal"].(map[string]any)
+	if goal["reviewer_model"] != "auto" || goal["budget"].(map[string]any)["limit_usd"] != 1.25 || goal["adaptive"].(map[string]any)["escalate_after"] != 3.0 {
+		t.Fatalf("controls not persisted: %v", goal)
+	}
+	runner.Agent = shellAgent{finished}
+	_, msg = call(t, cs, "resume_goal", map[string]any{"task_id": id, "max_iterations": 0, "max_cost_usd": 2.5, "escalate_after": 1, "reviewer_model": "auto"})
+	if msg != "" {
+		t.Fatal(msg)
+	}
+	done := waitFinished(t, cs, id)
+	goal = done["goal"].(map[string]any)
+	if done["status"] != "done" || goal["budget"].(map[string]any)["limit_usd"] != 2.5 || goal["adaptive"].(map[string]any)["escalate_after"] != 1.0 || goal["reviewer_selection"].(map[string]any)["active_model"] != "anthropic/claude-test" {
+		t.Fatalf("resume controls: %v", done)
 	}
 }
 

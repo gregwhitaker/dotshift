@@ -22,18 +22,18 @@ import (
 const usage = `dotshift: a local model router for coding agents
 
 Usage:
-  dotshift init     [-config FILE]   write a starter dotshift.yaml
-  dotshift serve    [-config FILE]   start the router, job runner and MCP intake (Ctrl-C stops them)
-  dotshift status   [-config FILE]   show whether the router is up and which models it serves
+  dotshift init     [-config FILE] [-mode api|subscription]   write a starter dotshift.yaml
+  dotshift serve    [-config FILE]   start the job runner and MCP intake (API mode also starts the router)
+  dotshift status   [-config FILE]   show the execution mode or API router status
   dotshift stop     [-config FILE]   stop the router
-  dotshift check    [-config FILE] [ALIAS...]   test chat and tool calls on every model behind each alias
+  dotshift check    [-config FILE] [ALIAS...]   check subscription CLI sign-ins, or test API models
   dotshift usage    [-config FILE] [PERIOD]     show requests, tokens and cost per alias and model (e.g. 7d)
   dotshift key      [-config FILE]   print the API key clients send to the router
   dotshift litellm-config [-config FILE]   print the generated LiteLLM config
   dotshift connect  [-revoke] [-new-passcode]
                                    show how to connect ChatGPT, and the approval passcode
 
-Jobs (the router must be running):
+Jobs (API mode requires the router):
   dotshift run [-repo NAME] [-model ALIAS] [-branch NAME] [-base REF] INSTRUCTIONS
                                    run a coding job in a new worktree and wait for it
   dotshift jobs [ID]               list jobs, or show one job's result
@@ -54,6 +54,7 @@ func main() {
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	path := fs.String("config", config.DefaultPath, "path to dotshift.yaml")
 	force := fs.Bool("force", false, "init: overwrite an existing config")
+	mode := fs.String("mode", config.ModeAPI, "init: api or subscription")
 	_ = fs.Parse(args)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -62,7 +63,7 @@ func main() {
 	var err error
 	switch cmd {
 	case "init":
-		err = runInit(*path, *force)
+		err = runInitMode(*path, *force, *mode)
 	case "serve":
 		err = runServe(ctx, *path)
 	case "status":
@@ -90,13 +91,27 @@ func main() {
 }
 
 func runInit(path string, force bool) error {
+	return runInitMode(path, force, config.ModeAPI)
+}
+
+func runInitMode(path string, force bool, mode string) error {
+	sample := config.Sample
+	if mode == config.ModeSubscription {
+		sample = config.SubscriptionSample
+	} else if mode != config.ModeAPI {
+		return errors.New("mode must be api or subscription")
+	}
 	if _, err := os.Stat(path); err == nil && !force {
 		return fmt.Errorf("%s already exists (use -force to overwrite)", path)
 	}
-	if err := os.WriteFile(path, []byte(config.Sample), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(sample), 0o644); err != nil {
 		return err
 	}
-	fmt.Printf("Wrote %s. Set your provider keys in the environment, then run `dotshift serve`.\n", path)
+	if mode == config.ModeSubscription {
+		fmt.Printf("Wrote %s. Sign in with `codex login` and `claude auth login`, add your repos, then run `dotshift check` and `dotshift serve`.\n", path)
+	} else {
+		fmt.Printf("Wrote %s. Set your provider keys in the environment, then run `dotshift serve`.\n", path)
+	}
 	return nil
 }
 
@@ -122,6 +137,9 @@ func prepare(path string) (*config.Config, *router.Router, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, nil, err
 	}
+	if cfg.UsesSubscriptions() {
+		return cfg, nil, nil
+	}
 	out, err := litellm.Marshal(litellm.Build(cfg))
 	if err != nil {
 		return nil, nil, err
@@ -141,6 +159,16 @@ func runServe(ctx context.Context, path string) error {
 	cfg, r, err := prepare(path)
 	if err != nil {
 		return err
+	}
+	if cfg.UsesSubscriptions() {
+		stopIntake, err := startIntake(path, cfg, nil)
+		if err != nil {
+			return err
+		}
+		defer stopIntake()
+		fmt.Println("Subscription mode: Codex and Claude Code use their own sign-ins. Press Ctrl-C to stop.")
+		<-ctx.Done()
+		return nil
 	}
 	if missing := r.MissingEnv(); len(missing) > 0 {
 		fmt.Fprintf(os.Stderr, "warning: not set, models using them will fail: %s\n", strings.Join(missing, ", "))
@@ -198,9 +226,13 @@ then run:
 }
 
 func runStatus(ctx context.Context, path string) error {
-	_, r, err := prepare(path)
+	cfg, r, err := prepare(path)
 	if err != nil {
 		return err
+	}
+	if cfg.UsesSubscriptions() {
+		fmt.Printf("Subscription mode configured. Aliases: %s\nUse `dotshift check` to verify CLI sign-in, and `dotshift jobs` for goal progress.\n", strings.Join(cfg.AliasNames(), ", "))
+		return nil
 	}
 	if !r.Running(ctx) {
 		fmt.Println("Router is not running. Start it with `dotshift serve`.")
@@ -223,6 +255,10 @@ func runStop(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
+	if r == nil {
+		fmt.Println("Subscription mode has no router to stop. Press Ctrl-C in the terminal running `dotshift serve` to stop the service.")
+		return nil
+	}
 	if err := r.Stop(ctx); err != nil {
 		return err
 	}
@@ -234,6 +270,9 @@ func runLiteLLMConfig(path string, w io.Writer) error {
 	cfg, err := config.Load(path)
 	if err != nil {
 		return err
+	}
+	if cfg.UsesSubscriptions() {
+		return errors.New("subscription mode does not use LiteLLM")
 	}
 	out, err := litellm.Marshal(litellm.Build(cfg))
 	if err != nil {
@@ -247,6 +286,9 @@ func runKey(path string) error {
 	cfg, err := config.Load(path)
 	if err != nil {
 		return err
+	}
+	if cfg.UsesSubscriptions() {
+		return errors.New("subscription mode uses CLI sign-in, not a router API key")
 	}
 	dir, err := stateDir(path)
 	if err != nil {

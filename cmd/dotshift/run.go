@@ -34,13 +34,20 @@ func init() {
 			}
 			defer closeStore()
 			if *repo == "" {
-				names := runner.Config.RepoNames()
+				repos, err := runner.Repos(ctx)
+				if err != nil {
+					return err
+				}
+				var names []string
+				for _, item := range repos {
+					names = append(names, item.Name)
+				}
 				if len(names) != 1 {
 					return fmt.Errorf("say which repo with -repo (allowlisted: %s)", listOrNone(names))
 				}
 				*repo = names[0]
 			}
-			if !r.Healthy(ctx) {
+			if r != nil && !r.Healthy(ctx) {
 				return errors.New("the router is not running; start it with `dotshift serve` in another terminal")
 			}
 			runner.Echo = os.Stdout
@@ -91,7 +98,7 @@ func readPrompt(args []string, stdin io.Reader) (string, error) {
 
 func listOrNone(names []string) string {
 	if len(names) == 0 {
-		return "none yet; add one under repos: in dotshift.yaml"
+		return "none yet; use create_project/register_project, or add one under repos: in dotshift.yaml"
 	}
 	return strings.Join(names, ", ")
 }

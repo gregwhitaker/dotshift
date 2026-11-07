@@ -28,15 +28,35 @@ const (
 )
 
 type listReposOut struct {
-	Repos []repoOut `json:"repos"`
+	Repos    []repoOut           `json:"repos"`
+	Projects jobs.ProjectOptions `json:"projects"`
 	// DefaultModel is the alias start_task uses when none is given.
 	DefaultModel string   `json:"default_model"`
 	Models       []string `json:"models"`
 }
 
 type repoOut struct {
-	Name     string `json:"name"`
-	HasTests bool   `json:"has_tests"`
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	HasTests    bool   `json:"has_tests"`
+	TestCommand string `json:"test_command,omitempty"`
+	Managed     bool   `json:"managed,omitempty"`
+}
+
+type createProjectIn struct {
+	Name        string `json:"name" jsonschema:"new folder and repo name: 1-64 lowercase letters, digits, - or _, starting with a letter or digit; created directly inside the configured projects.root"`
+	Description string `json:"description,omitempty" jsonschema:"short project description for the initial README; provide the full objective and acceptance criteria separately to start_goal"`
+	TestProfile string `json:"test_profile" jsonschema:"name from list_repos.projects.test_profiles; the coding agent must implement real tests for its command"`
+}
+
+type registerProjectIn struct {
+	Name        string `json:"name" jsonschema:"existing Git repository folder directly inside projects.root; must have an initial commit; paths and symlinks are not accepted"`
+	TestProfile string `json:"test_profile" jsonschema:"name from list_repos.projects.test_profiles"`
+}
+
+type projectOut struct {
+	Project *jobs.Project `json:"project"`
+	Next    string        `json:"next"`
 }
 
 type startTaskIn struct {
@@ -61,6 +81,31 @@ type sendInputIn struct {
 	Input  string `json:"input" jsonschema:"the answer to the agent's question, or further instructions"`
 }
 
+type startGoalIn struct {
+	Repo          string   `json:"repo,omitempty" jsonschema:"allowlisted repo name; optional when only one repo is configured"`
+	Goal          string   `json:"goal" jsonschema:"the complete project objective and acceptance criteria to pursue autonomously"`
+	Model         string   `json:"model,omitempty" jsonschema:"model alias from list_repos"`
+	Strategy      string   `json:"strategy,omitempty" jsonschema:"model strategy from list_strategies; defaults to jobs.strategy"`
+	ReviewerModel string   `json:"reviewer_model,omitempty" jsonschema:"reviewer alias or auto to prefer a different provider in the coding alias; always excludes the implementation model; defaults to jobs.reviewer_model"`
+	EscalateAfter int      `json:"escalate_after,omitempty" jsonschema:"adaptive strategy only: repeated failed tests, unchanged cycles, agent failures, or rejected reviews before advancing to the next configured model; default jobs.escalate_after"`
+	MaxCostUSD    *float64 `json:"max_cost_usd,omitempty" jsonschema:"API mode only: project spending cap in USD including retries and review; stop once reported costs reach it, so the final request can exceed it; 0 disables; defaults to jobs.max_cost_usd"`
+	Branch        string   `json:"branch,omitempty" jsonschema:"optional new branch name"`
+	Base          string   `json:"base,omitempty" jsonschema:"optional starting branch or commit"`
+	MaxIterations int      `json:"max_iterations,omitempty" jsonschema:"optional limit on coding and testing cycles; 0 means keep working until complete or blocked"`
+}
+
+type resumeGoalIn struct {
+	TaskID           string   `json:"task_id" jsonschema:"the unfinished goal's task_id"`
+	Input            string   `json:"input,omitempty" jsonschema:"additional instructions or the answer to a blocker"`
+	Model            string   `json:"model,omitempty" jsonschema:"optional replacement model alias"`
+	Strategy         string   `json:"strategy,omitempty" jsonschema:"optional replacement strategy from list_strategies; alias uses configured alias order"`
+	ReviewerModel    *string  `json:"reviewer_model,omitempty" jsonschema:"optional replacement reviewer alias or auto; empty string restores same-model fresh review"`
+	EscalateAfter    *int     `json:"escalate_after,omitempty" jsonschema:"optional positive adaptive escalation threshold; resuming retains the current model tier"`
+	MaxCostUSD       *float64 `json:"max_cost_usd,omitempty" jsonschema:"optional replacement total USD cap for a goal that started capped; accumulated spending is preserved; 0 removes the cap; only raise or remove a cap when the user authorizes it"`
+	RetryUnavailable bool     `json:"retry_unavailable,omitempty" jsonschema:"clear cached unavailability after subscription allowance resets or API credits/access are restored; does not change actual provider limits"`
+	MaxIterations    *int     `json:"max_iterations,omitempty" jsonschema:"optional replacement total iteration limit; 0 removes the limit"`
+}
+
 // taskOut is a job as MCP clients see it. Fields that don't apply are left out.
 type taskOut struct {
 	TaskID string `json:"task_id"`
@@ -74,6 +119,7 @@ type taskOut struct {
 	Repo            string `json:"repo"`
 	Branch          string `json:"branch"`
 	Model           string `json:"model"`
+	ExecutionMode   string `json:"execution_mode"`
 	Instructions    string `json:"instructions"`
 	FollowsUp       string `json:"follows_up,omitempty"`
 	CreatedAt       string `json:"created_at"`
@@ -93,7 +139,8 @@ type taskOut struct {
 	// DiffTruncated is true when Diff was cut short.
 	DiffTruncated bool `json:"diff_truncated,omitempty"`
 	// Next says what the client can do now.
-	Next string `json:"next,omitempty"`
+	Next string             `json:"next,omitempty"`
+	Goal *jobs.GoalProgress `json:"goal,omitempty"`
 }
 
 type cancelOut struct {
@@ -110,23 +157,128 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 	s := mcp.NewServer(&mcp.Implementation{Name: "dotshift", Title: "dotshift", Version: Version}, &mcp.ServerOptions{
 		Instructions: "dotshift runs coding tasks on the user's own machine, in git repositories they allowed, " +
 			"with the coding agent and models they chose. Each task works on its own new git branch and never " +
-			"touches the user's working copy. Call list_repos first, then start_task. Poll task_status until " +
-			"finished is true (tasks take minutes), then task_result. If the agent's notes ask a question, " +
-			"answer it with send_input, which continues the work on the same branch.",
+			"touches the user's working copy. Call list_repos first. When projects.enabled is true, " +
+			"use create_project to start a new project, or register_project for an existing committed repository directly inside projects.root. " +
+			"Choose a test_profile from the catalog. Creation seeds a README and initial commit; it does not build the application. " +
+			"Then call start_goal with the returned project name, the user's objective, and concrete acceptance criteria, including real tests. " +
+			"Use start_goal for a project objective that " +
+			"should keep working, testing, and fixing issues autonomously; its repo must have tests configured. " +
+			"Goals persist and resume when the service restarts. Use start_task for a single coding task. " +
+			"Call list_strategies to select a goal's model policy and see observed model availability. " +
+			"The strategy catalog reports execution_mode: api or subscription. In subscription mode the official CLIs use the user's saved sign-ins; there is no API fallback. " +
+			"Use prefer_openai to switch from OpenAI to Anthropic on observed limits. Subscription mode waits for a known reset, or blocks for retry_unavailable if no reset time is reported. " +
+			"Use adaptive for an ordered ladder that escalates on repeated failures or stalled progress, and reviewer_model=auto for a distinct completion reviewer. " +
+			"Only API mode supports max_cost_usd to bound reported spending; the last request may exceed it. Subscription mode uses max_iterations and the configured timeout, not USD caps. " +
+			"Never raise or remove a spending cap to bypass a blocker without the user's authorization. " +
+			"Only set retry_unavailable after access has actually been restored. " +
+			"Poll task_status until finished is true (tasks take minutes), then task_result. If the agent's notes ask a question, " +
+			"answer it with send_input for a task, or resume_goal for a blocked goal. Both continue on the same branch.",
 	})
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)}
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name: "list_strategies", Title: "List model strategies",
+		Description: "List execution mode, goal model strategies, eligible aliases, spending-cap support, and observed availability and retry times. Does not make model calls or measure remaining credits/subscription allowance.",
+		Annotations: readOnly,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, *jobs.StrategyCatalog, error) {
+		catalog, err := svc.Strategies(ctx)
+		return nil, catalog, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_repos",
 		Title:       "List repos",
-		Description: "List the repositories dotshift may work in, and the model aliases tasks can use.",
+		Description: "List allowed repositories, model aliases, and the project root and test profiles available for create_project and register_project.",
 		Annotations: readOnly,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, listReposOut, error) {
-		out := listReposOut{Repos: []repoOut{}, DefaultModel: defaultModel, Models: models}
-		for _, r := range svc.Repos() {
-			out.Repos = append(out.Repos, repoOut{Name: r.Name, HasTests: r.HasTests})
+		out := listReposOut{Repos: []repoOut{}, DefaultModel: defaultModel, Models: models, Projects: svc.ProjectOptions()}
+		repos, err := svc.Repos(ctx)
+		if err != nil {
+			return nil, out, err
+		}
+		for _, r := range repos {
+			out.Repos = append(out.Repos, repoOut{Name: r.Name, Path: r.Path, HasTests: r.HasTests, TestCommand: r.TestCommand, Managed: r.Managed})
 		}
 		logf("list_repos: %d repo(s)", len(out.Repos))
+		return nil, out, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "create_project", Title: "Create a project",
+		Description: "Create a new local Git repository inside the configured project root, with a README and initial commit, and register it immediately. Never overwrites an existing path. Choose a test profile from list_repos; then call start_goal to build the project and its tests. Makes no model calls and publishes nothing.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in createProjectIn) (*mcp.CallToolResult, projectOut, error) {
+		project, err := svc.CreateProject(ctx, jobs.ProjectRequest{Name: in.Name, Description: in.Description, TestProfile: in.TestProfile})
+		if err != nil {
+			return nil, projectOut{}, err
+		}
+		logf("create_project: %s", project.Name)
+		return nil, projectOut{Project: project, Next: "Call start_goal with repo=" + project.Name + " and the complete objective and acceptance criteria. The agent must scaffold the application and real tests for the configured test command. Results are committed to the returned task branch."}, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "register_project", Title: "Register an existing project",
+		Description: "Register an existing Git repository directly inside the configured project root. Requires an initial commit and a test profile from list_repos. Preserves existing files and uncommitted changes; tasks start from committed code. Safe to retry with the same name and profile.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(false), IdempotentHint: true},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in registerProjectIn) (*mcp.CallToolResult, projectOut, error) {
+		project, err := svc.RegisterProject(ctx, jobs.ProjectRequest{Name: in.Name, TestProfile: in.TestProfile})
+		if err != nil {
+			return nil, projectOut{}, err
+		}
+		logf("register_project: %s", project.Name)
+		return nil, projectOut{Project: project, Next: "Use start_goal or start_task with repo=" + project.Name + ". Work starts from committed code; uncommitted files in the original checkout are not included."}, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "start_goal", Title: "Start a project goal",
+		Description: "Pursue a project goal autonomously on a new branch. Repeats coding, configured tests, and fixes " +
+			"until tests pass and an independent review confirms completion. Persists progress across service restarts. " +
+			"Select an optional model strategy from list_strategies. Requires a repo with has_tests=true. " +
+			"Returns a task_id for task_status, task_result, and cancel_task.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in startGoalIn) (*mcp.CallToolResult, taskOut, error) {
+		repo := in.Repo
+		if repo == "" {
+			repos, err := svc.Repos(ctx)
+			if err != nil {
+				return nil, taskOut{}, err
+			}
+			if len(repos) == 1 {
+				repo = repos[0].Name
+			}
+		}
+		j, err := svc.Submit(ctx, jobs.Request{
+			Repo: repo, Prompt: in.Goal, Model: in.Model, Branch: in.Branch, Base: in.Base,
+			Goal: true, MaxIterations: in.MaxIterations,
+			Strategy: in.Strategy, ReviewerModel: in.ReviewerModel, EscalateAfter: in.EscalateAfter, MaxCostUSD: in.MaxCostUSD,
+		})
+		if err != nil {
+			return nil, taskOut{}, err
+		}
+		logf("start_goal: %s in %s with %s", j.ID, j.Repo, j.Model)
+		out := describe(j)
+		out.Next = "The goal continues autonomously. Use task_status to check progress and task_result for the outcome."
+		return nil, out, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "resume_goal", Title: "Resume a project goal",
+		Description: "Resume a blocked or cancelled goal in its existing worktree, with optional instructions, " +
+			"model or strategy change, or a higher total iteration limit. Use retry_unavailable only after allowance resets or access is restored. " +
+			"Returns the same task_id. Resolving the blocker resumes the autonomous loop.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in resumeGoalIn) (*mcp.CallToolResult, taskOut, error) {
+		j, err := svc.ResumeGoal(ctx, jobs.ResumeGoalRequest{
+			ID: in.TaskID, Input: in.Input, Model: in.Model, MaxIterations: in.MaxIterations,
+			Strategy: in.Strategy, RetryUnavailable: in.RetryUnavailable,
+			ReviewerModel: in.ReviewerModel, EscalateAfter: in.EscalateAfter, MaxCostUSD: in.MaxCostUSD,
+		})
+		if err != nil {
+			return nil, taskOut{}, err
+		}
+		logf("resume_goal: %s with %s", j.ID, j.Model)
+		out := describe(j)
+		out.Next = "The goal is continuing autonomously. Use task_status to check progress."
 		return nil, out, nil
 	})
 
@@ -140,7 +292,11 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in startTaskIn) (*mcp.CallToolResult, taskOut, error) {
 		repo := in.Repo
 		if repo == "" {
-			if repos := svc.Repos(); len(repos) == 1 {
+			repos, err := svc.Repos(ctx)
+			if err != nil {
+				return nil, taskOut{}, err
+			}
+			if len(repos) == 1 {
 				repo = repos[0].Name
 			} else {
 				return nil, taskOut{}, errors.New("say which repo; list_repos shows the choices")
@@ -174,6 +330,9 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 		} else {
 			out.Next = "Finished. Call task_result for the changes and test results."
 		}
+		if j.Goal != nil && j.Status == jobs.Blocked {
+			out.Next = "The goal needs input. Inspect error and goal.report, then call resume_goal after resolving the blocker."
+		}
 		return nil, out, nil
 	})
 
@@ -204,6 +363,8 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 			}
 		}
 		switch {
+		case j.Goal != nil && j.Status != jobs.Done:
+			out.Next = "The goal's work is preserved. Resolve the reported issue and call resume_goal to continue on the same branch."
 		case j.Status == jobs.Done && j.Commits > 0:
 			out.Next = fmt.Sprintf("The work is on branch %s in the user's local repo. To ask for changes or answer the agent, use send_input.", j.Branch)
 		case j.Status == jobs.Done:
@@ -252,10 +413,20 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 func describe(j *jobs.Job) taskOut {
 	out := taskOut{
 		TaskID: j.ID, Status: string(j.Status), Finished: j.Status.Terminal(),
-		WaitingForInput: j.Status == jobs.WaitingInput,
+		WaitingForInput: j.Status == jobs.WaitingInput || j.Status == jobs.Blocked,
 		Repo:            j.Repo, Branch: j.Branch, Model: j.Model, Instructions: j.Prompt, FollowsUp: j.Parent,
 		CreatedAt: stamp(j.CreatedAt), StartedAt: stamp(j.StartedAt), FinishedAt: stamp(j.FinishedAt),
-		Notes: j.Summary, Commits: j.Commits,
+		Notes: j.Summary, Commits: j.Commits, Goal: j.Goal,
+		ExecutionMode: j.ExecutionMode,
+	}
+	if out.ExecutionMode == "" {
+		out.ExecutionMode = "api"
+	}
+	if j.Goal != nil {
+		out.Tests = j.TestResult
+		if j.TestResult == "failed" {
+			out.TestOutput = j.TestOutput
+		}
 	}
 	if j.Status != jobs.Cancelled {
 		out.Error = j.Error

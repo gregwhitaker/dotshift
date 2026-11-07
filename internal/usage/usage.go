@@ -10,6 +10,7 @@ package usage
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,19 +42,27 @@ type Record struct {
 	InputTokens  int     `json:"input_tokens"`
 	OutputTokens int     `json:"output_tokens"`
 	Cost         float64 `json:"cost"` // USD, as LiteLLM priced it
+	CostKnown    bool    `json:"cost_known"`
+	RequestID    string  `json:"request_id,omitempty"` // dotshift's accounting ID
 	Error        string  `json:"error,omitempty"`
 }
 
 // payload is the subset of LiteLLM's StandardLoggingPayload dotshift reads.
 type payload struct {
-	ModelGroup       string  `json:"model_group"`
-	Model            string  `json:"model"`
-	Status           string  `json:"status"`
-	PromptTokens     int     `json:"prompt_tokens"`
-	CompletionTokens int     `json:"completion_tokens"`
-	ResponseCost     float64 `json:"response_cost"`
-	StartTime        float64 `json:"startTime"`
-	ErrorStr         string  `json:"error_str"`
+	ModelGroup       string   `json:"model_group"`
+	Model            string   `json:"model"`
+	Status           string   `json:"status"`
+	PromptTokens     int      `json:"prompt_tokens"`
+	CompletionTokens int      `json:"completion_tokens"`
+	ResponseCost     *float64 `json:"response_cost"`
+	CostFinalized    *bool    `json:"cost_finalized"`
+	Metadata         struct {
+		SpendLogsMetadata struct {
+			RequestID string `json:"dotshift_request_id"`
+		} `json:"spend_logs_metadata"`
+	} `json:"metadata"`
+	StartTime float64 `json:"startTime"`
+	ErrorStr  string  `json:"error_str"`
 }
 
 var fallbackSuffix = regexp.MustCompile(`~\d+$`)
@@ -68,7 +77,10 @@ func (p payload) record() Record {
 		OK:           p.Status != "failure",
 		InputTokens:  p.PromptTokens,
 		OutputTokens: p.CompletionTokens,
-		Cost:         p.ResponseCost,
+		RequestID:    p.Metadata.SpendLogsMetadata.RequestID,
+	}
+	if p.ResponseCost != nil && *p.ResponseCost >= 0 && !math.IsInf(*p.ResponseCost, 0) && !math.IsNaN(*p.ResponseCost) && (p.CostFinalized == nil || *p.CostFinalized) {
+		r.Cost, r.CostKnown = *p.ResponseCost, true
 	}
 	if !r.OK {
 		r.Error = firstLine(p.ErrorStr, 200)
@@ -121,6 +133,8 @@ type Receiver struct {
 	Path string
 	// Token must arrive as "Authorization: Bearer <Token>".
 	Token string
+	// OnRecords durably applies receipts before appending the diagnostic log.
+	OnRecords func(context.Context, []Record) error
 
 	mu sync.Mutex
 }
@@ -143,6 +157,12 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		http.Error(w, "bad payload: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+	if rc.OnRecords != nil {
+		if err := rc.OnRecords(req.Context(), records); err != nil {
+			http.Error(w, "saving usage receipts failed", http.StatusInternalServerError)
+			return
+		}
 	}
 	if err := rc.Append(records); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -40,3 +40,15 @@ func TestUnknownAgent(t *testing.T) {
 		t.Fatal("want error")
 	}
 }
+
+func TestGoalReviewCommand(t *testing.T) {
+	a := &Codex{Path: "codex"}
+	cmd := a.Command(context.Background(), Task{
+		Dir: "/wt/goal", Model: "smart", LastMessageFile: "/state/result.json",
+		OutputSchemaFile: "/state/goal.schema.json", ReadOnly: true,
+	})
+	args := strings.Join(cmd.Args, " ")
+	if !strings.Contains(args, "--sandbox read-only") || !strings.Contains(args, "--output-schema /state/goal.schema.json -") {
+		t.Fatalf("goal review command = %s", args)
+	}
+}

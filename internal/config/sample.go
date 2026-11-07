@@ -1,5 +1,48 @@
 package config
 
+// SubscriptionSample uses the official local CLIs and their own saved sign-ins.
+const SubscriptionSample = `# Uses your ChatGPT/Codex and Claude Code subscription allowances.
+# Install current official codex and claude CLIs, then sign in:
+#   codex login
+#   claude auth login
+# No provider API keys, LiteLLM, or Docker required.
+
+aliases:
+  smart: [openai/default, anthropic/default]
+  codex: [openai/default]
+  claude: [anthropic/default]
+# "default" uses the CLI's default subscription model. To pin a model, use
+# openai/<Codex model name> or anthropic/<Claude Code model name or alias>.
+
+# Allowlist repositories and a test command before starting project goals.
+repos: {}
+#  myproject:
+#    path: ~/src/myproject
+#    test: go test ./...
+
+# Uncomment to let Dot create or register projects directly in this folder.
+# projects:
+#   root: ~/workspace
+#   test_profiles:
+#     go: go test ./...
+#     node: npm test
+#     python: python3 -m unittest discover -s tests -v
+
+jobs:
+  mode: subscription
+  model: smart
+  strategy: prefer_openai
+  reviewer_model: auto
+  timeout: 30m
+  # agent:
+  #   command: /path/to/codex
+  # claude_command: /path/to/claude
+  # Set worktree_dir outside any repository's working copy if necessary.
+
+mcp:
+  tunnel: tailscale
+`
+
 // Sample is the dotshift.yaml written by `dotshift init`.
 const Sample = `# dotshift configuration.
 #
@@ -51,8 +94,25 @@ repos: {}
 #    path: ~/code/myapp
 #    test: go test ./...   # optional; run after the agent, result kept on the job
 
+# Uncomment to let Dot create or register projects directly in this folder.
+# projects:
+#   root: ~/workspace
+#   test_profiles:
+#     go: go test ./...
+#     node: npm test
+#     python: python3 -m unittest discover -s tests -v
+
 jobs:
   model: smart            # alias used when a job doesn't ask for one
+  # Project goals can select prefer_openai to use this alias's OpenAI models
+  # first, then its Anthropic models, remembering API limits across restarts.
+  # strategy: prefer_openai # default: alias (existing router fallbacks)
+  # Or use adaptive: order the chosen alias from baseline to strongest.
+  # strategy: adaptive
+  # escalate_after: 2       # repeated failures or stalled cycles before escalation
+  # reviewer_model: auto   # prefer another provider; always a different model
+  # max_cost_usd: 10        # per-goal reported-spend cap; 0 disables (default)
+  # The final request may cross the cap. Costs include review and fallback.
   timeout: 1h
   agent:
     name: codex           # Codex CLI, run as: codex exec ...

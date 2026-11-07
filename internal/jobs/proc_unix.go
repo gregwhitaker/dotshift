@@ -28,6 +28,19 @@ func terminate(pid int) error {
 	return err
 }
 
+// killGroup is the final cleanup for a supervised goal step, including any
+// children that ignored SIGTERM or outlived their parent.
+func killGroup(pid int) error {
+	if pid <= 0 {
+		return nil
+	}
+	err := syscall.Kill(-pid, syscall.SIGKILL)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	return err
+}
+
 // alive reports whether a process exists.
 func alive(pid int) bool {
 	if pid <= 0 {

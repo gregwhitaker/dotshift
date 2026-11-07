@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -43,9 +44,41 @@ CREATE TABLE IF NOT EXISTS jobs (
 	created_at  INTEGER NOT NULL,
 	started_at  INTEGER NOT NULL DEFAULT 0,
 	finished_at INTEGER NOT NULL DEFAULT 0,
-	parent      TEXT NOT NULL DEFAULT ''
+	parent      TEXT NOT NULL DEFAULT '',
+	goal        TEXT NOT NULL DEFAULT '',
+	run_token   TEXT NOT NULL DEFAULT '',
+	execution_mode TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS jobs_created ON jobs (created_at);
+CREATE TABLE IF NOT EXISTS model_availability (
+	scope TEXT PRIMARY KEY,
+	reason TEXT NOT NULL,
+	retry_at INTEGER NOT NULL,
+	recorded_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS goal_budgets (
+	job_id TEXT PRIMARY KEY,
+	limit_units INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS goal_model_calls (
+	id TEXT PRIMARY KEY,
+	job_id TEXT NOT NULL,
+	run_token TEXT NOT NULL,
+	model TEXT NOT NULL,
+	role TEXT NOT NULL,
+	cost_units INTEGER,
+	input_tokens INTEGER NOT NULL DEFAULT 0,
+	output_tokens INTEGER NOT NULL DEFAULT 0,
+	created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS goal_model_calls_job ON goal_model_calls(job_id);
+CREATE TABLE IF NOT EXISTS projects (
+	name TEXT PRIMARY KEY,
+	root TEXT NOT NULL,
+	path TEXT NOT NULL UNIQUE,
+	test_profile TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+);
 `
 
 // OpenStore opens (creating if needed) the job database at path.
@@ -59,10 +92,11 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("open job database %s: %w", path, err)
 	}
-	// Databases made before follow-up jobs existed lack the parent column.
-	if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN parent TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
-		db.Close()
-		return nil, fmt.Errorf("upgrade job database %s: %w", path, err)
+	for _, column := range []string{"parent", "goal", "run_token", "execution_mode"} {
+		if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN ` + column + ` TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			db.Close()
+			return nil, fmt.Errorf("upgrade job database %s: %w", path, err)
+		}
 	}
 	return &Store{db: db}, nil
 }
@@ -72,16 +106,37 @@ func (s *Store) Close() error { return s.db.Close() }
 
 const columns = `id, repo, repo_path, prompt, model, branch, base_commit, worktree, status,
 	error, summary, commits, diffstat, test_result, test_output, exit_code, log_path,
-	runner_pid, agent_pid, created_at, started_at, finished_at, parent`
+	runner_pid, agent_pid, created_at, started_at, finished_at, parent, goal, run_token, execution_mode`
 
 // Save inserts or replaces a job.
 func (s *Store) Save(ctx context.Context, j *Job) error {
-	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO jobs (`+columns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	goal, err := encodeGoal(j.Goal)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT OR REPLACE INTO jobs (`+columns+`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		j.ID, j.Repo, j.RepoPath, j.Prompt, j.Model, j.Branch, j.BaseCommit, j.Worktree, string(j.Status),
 		j.Error, j.Summary, j.Commits, j.DiffStat, j.TestResult, j.TestOutput, j.ExitCode, j.LogPath,
-		j.RunnerPID, j.AgentPID, unix(j.CreatedAt), unix(j.StartedAt), unix(j.FinishedAt), j.Parent)
-	return err
+		j.RunnerPID, j.AgentPID, unix(j.CreatedAt), unix(j.StartedAt), unix(j.FinishedAt), j.Parent, goal, j.RunToken, j.ExecutionMode)
+	if err != nil {
+		return err
+	}
+	if j.Goal != nil && j.Goal.Budget != nil {
+		limit, err := budgetUnits(j.Goal.Budget.LimitUSD)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO goal_budgets (job_id, limit_units) VALUES (?, ?) ON CONFLICT(job_id) DO NOTHING`, j.ID, limit); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Get returns one job.
@@ -90,6 +145,9 @@ func (s *Store) Get(ctx context.Context, id string) (*Job, error) {
 	j, err := scan(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w %q", ErrNotFound, id)
+	}
+	if err == nil {
+		err = s.refreshBudget(ctx, j)
 	}
 	return j, err
 }
@@ -109,7 +167,16 @@ func (s *Store) List(ctx context.Context) ([]*Job, error) {
 		}
 		out = append(out, j)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	for _, j := range out {
+		if err := s.refreshBudget(ctx, j); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // SetStatus changes only a job's status and error, leaving fields the
@@ -136,14 +203,20 @@ type scanner interface{ Scan(dest ...any) error }
 func scan(r scanner) (*Job, error) {
 	var j Job
 	var status string
+	var goal string
 	var created, started, finished int64
 	err := r.Scan(&j.ID, &j.Repo, &j.RepoPath, &j.Prompt, &j.Model, &j.Branch, &j.BaseCommit, &j.Worktree, &status,
 		&j.Error, &j.Summary, &j.Commits, &j.DiffStat, &j.TestResult, &j.TestOutput, &j.ExitCode, &j.LogPath,
-		&j.RunnerPID, &j.AgentPID, &created, &started, &finished, &j.Parent)
+		&j.RunnerPID, &j.AgentPID, &created, &started, &finished, &j.Parent, &goal, &j.RunToken, &j.ExecutionMode)
 	if err != nil {
 		return nil, err
 	}
 	j.Status = Status(status)
+	if goal != "" {
+		if err := json.Unmarshal([]byte(goal), &j.Goal); err != nil {
+			return nil, fmt.Errorf("goal %s: %w", j.ID, err)
+		}
+	}
 	j.CreatedAt, j.StartedAt, j.FinishedAt = fromUnix(created), fromUnix(started), fromUnix(finished)
 	return &j, nil
 }

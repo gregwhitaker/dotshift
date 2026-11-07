@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -29,8 +30,10 @@ type Config struct {
 	// Repos is the allowlist of repositories jobs may run in, keyed by a short
 	// name intakes use to refer to them.
 	Repos map[string]Repo `yaml:"repos"`
-	Jobs  Jobs            `yaml:"jobs"`
-	MCP   MCP             `yaml:"mcp"`
+	// Projects enables MCP project creation and registration inside one root.
+	Projects Projects `yaml:"projects"`
+	Jobs     Jobs     `yaml:"jobs"`
+	MCP      MCP      `yaml:"mcp"`
 }
 
 // MCP controls the MCP intake `dotshift serve` runs: the endpoint your dot
@@ -66,10 +69,30 @@ type Repo struct {
 	Test string `yaml:"test"`
 }
 
+// Projects is the local policy for repositories managed through MCP. Clients
+// choose a test profile, not an arbitrary host shell command.
+type Projects struct {
+	Root         string            `yaml:"root"`
+	TestProfiles map[string]string `yaml:"test_profiles"`
+}
+
 // Jobs controls how coding jobs run.
 type Jobs struct {
+	// Mode chooses API routing or the official CLIs with subscription sign-in.
+	Mode string `yaml:"mode"`
+	// ClaudeCommand is the Claude Code executable used in subscription mode.
+	ClaudeCommand string `yaml:"claude_command"`
 	// Model is the alias jobs use when the request doesn't name one.
 	Model string `yaml:"model"`
+	// Strategy is the default model selection policy for project goals.
+	Strategy string `yaml:"strategy"`
+	// ReviewerModel is an alias, or "auto" to choose a different model from
+	// the coding alias. Empty preserves review with the coding model.
+	ReviewerModel string `yaml:"reviewer_model"`
+	// EscalateAfter is the number of stalled cycles before adaptive escalates.
+	EscalateAfter int `yaml:"escalate_after"`
+	// MaxCostUSD is a reported-spend cap for each new project goal. Zero disables it.
+	MaxCostUSD float64 `yaml:"max_cost_usd"`
 	// Timeout stops a job's agent after this long, e.g. "45m".
 	Timeout Duration `yaml:"timeout"`
 	// WorktreeDir is where job worktrees are created. Defaults to
@@ -103,8 +126,10 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 
 // Values of mcp.tunnel.
 const (
-	TunnelTailscale = "tailscale"
-	TunnelNone      = "none"
+	ModeAPI          = "api"
+	ModeSubscription = "subscription"
+	TunnelTailscale  = "tailscale"
+	TunnelNone       = "none"
 )
 
 // KnownAgents are the coding agents dotshift can launch.
@@ -188,6 +213,27 @@ func Parse(data []byte) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
+	if c.Jobs.Mode == "" {
+		c.Jobs.Mode = ModeAPI
+	}
+	if c.Jobs.ClaudeCommand == "" {
+		c.Jobs.ClaudeCommand = "claude"
+	}
+	if c.UsesSubscriptions() {
+		if c.Providers == nil {
+			c.Providers = map[string]Provider{}
+		}
+		for _, models := range c.Aliases {
+			for _, model := range models {
+				p, _, _ := SplitModel(model)
+				if p == "openai" || p == "anthropic" {
+					if _, exists := c.Providers[p]; !exists {
+						c.Providers[p] = Provider{}
+					}
+				}
+			}
+		}
+	}
 	if c.Router.Host == "" {
 		c.Router.Host = "127.0.0.1"
 	}
@@ -210,6 +256,12 @@ func (c *Config) applyDefaults() {
 	if c.Jobs.Timeout.Duration == 0 {
 		c.Jobs.Timeout.Duration = time.Hour
 	}
+	if c.Jobs.Strategy == "" {
+		c.Jobs.Strategy = StrategyAlias
+	}
+	if c.Jobs.EscalateAfter == 0 {
+		c.Jobs.EscalateAfter = 2
+	}
 	if c.Jobs.Agent.Name == "" {
 		c.Jobs.Agent.Name = "codex"
 	}
@@ -228,6 +280,26 @@ func (c *Config) applyDefaults() {
 // Validate reports every problem in the config at once.
 func (c *Config) Validate() error {
 	var errs []string
+	errs = append(errs, c.Projects.validate()...)
+	if c.Jobs.Mode != "" && c.Jobs.Mode != ModeAPI && c.Jobs.Mode != ModeSubscription {
+		errs = append(errs, "jobs.mode must be api or subscription")
+	}
+	if c.UsesSubscriptions() {
+		if c.Jobs.MaxCostUSD != 0 {
+			errs = append(errs, "subscription mode cannot meter USD spending; use max_iterations and jobs.timeout instead of jobs.max_cost_usd")
+		}
+		if len(c.Jobs.Agent.Args) != 0 {
+			errs = append(errs, "jobs.agent.args is only supported in api mode; subscription mode controls authentication and sandbox arguments")
+		}
+		for name, p := range c.Providers {
+			if name != "openai" && name != "anthropic" {
+				errs = append(errs, "subscription mode only supports openai and anthropic")
+			}
+			if p.APIKeyEnv != "" || p.BaseURL != "" {
+				errs = append(errs, "subscription mode uses CLI sign-in; remove API key and base URL settings from providers."+name)
+			}
+		}
+	}
 	if c.Router.Port < 1 || c.Router.Port > 65535 {
 		errs = append(errs, fmt.Sprintf("router.port %d is out of range", c.Router.Port))
 	}
@@ -270,6 +342,21 @@ func (c *Config) Validate() error {
 	if _, ok := c.Aliases[c.Jobs.Model]; !ok && len(c.Aliases) > 0 {
 		errs = append(errs, fmt.Sprintf("jobs.model %q is not one of the aliases", c.Jobs.Model))
 	}
+	if _, err := c.StrategyModels(c.Jobs.Model, c.Jobs.Strategy); err != nil {
+		errs = append(errs, "jobs.strategy: "+err.Error())
+	}
+	if c.Jobs.EscalateAfter < 1 {
+		errs = append(errs, "jobs.escalate_after must be positive")
+	}
+	if err := ValidateMaxCost(c.Jobs.MaxCostUSD); err != nil {
+		errs = append(errs, "jobs.max_cost_usd: "+err.Error())
+	}
+	if c.Jobs.MaxCostUSD > 0 && !c.Router.UsageEnabled() {
+		errs = append(errs, "jobs.max_cost_usd requires usage recording")
+	}
+	if err := c.ValidateReviewer(c.Jobs.Model, c.Jobs.Strategy, c.Jobs.ReviewerModel); err != nil {
+		errs = append(errs, "jobs.reviewer_model: "+err.Error())
+	}
 	if c.Jobs.Timeout.Duration < 0 {
 		errs = append(errs, "jobs.timeout must be positive")
 	}
@@ -301,6 +388,24 @@ func (c *Config) Validate() error {
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("invalid config:\n  - %s", strings.Join(errs, "\n  - "))
+	}
+	return nil
+}
+
+// ExecutionMode normalizes older configurations to API mode.
+func (c *Config) ExecutionMode() string {
+	if c.UsesSubscriptions() {
+		return ModeSubscription
+	}
+	return ModeAPI
+}
+
+func (c *Config) UsesSubscriptions() bool { return c.Jobs.Mode == ModeSubscription }
+
+// ValidateMaxCost also rejects NaN/Inf before they can enter a persistent budget.
+func ValidateMaxCost(value float64) error {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 1e9 {
+		return errors.New("must be a finite USD amount between 0 and 1000000000; 0 disables the cap")
 	}
 	return nil
 }

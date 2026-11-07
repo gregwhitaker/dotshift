@@ -62,15 +62,20 @@ type Outcome struct {
 // OK reports whether the request passed.
 func (o Outcome) OK() bool { return o.Err == nil }
 
-// Result holds both test requests for one target.
+// Result holds chat and coding-protocol checks for one target.
 type Result struct {
 	Target
-	Chat  Outcome
-	Tools Outcome
+	Chat       Outcome
+	Tools      Outcome
+	Responses  Outcome
+	ToolLoop   Outcome
+	Structured Outcome
 }
 
-// OK reports whether both requests passed.
-func (r Result) OK() bool { return r.Chat.OK() && r.Tools.OK() }
+// OK reports whether every check passed.
+func (r Result) OK() bool {
+	return r.Chat.OK() && r.Tools.OK() && r.Responses.OK() && r.ToolLoop.OK() && r.Structured.OK()
+}
 
 // Client sends test requests to the router's OpenAI-compatible API.
 type Client struct {
@@ -90,7 +95,11 @@ func (c *Client) Run(ctx context.Context, targets []Target) []Result {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[i] = Result{Target: t, Chat: c.timed(ctx, t.Name, c.Chat), Tools: c.timed(ctx, t.Name, c.ToolCall)}
+			results[i] = Result{
+				Target: t, Chat: c.timed(ctx, t.Name, c.Chat), Tools: c.timed(ctx, t.Name, c.ToolCall),
+				Responses: c.timed(ctx, t.Name, c.ResponseStream), ToolLoop: c.timed(ctx, t.Name, c.ResponseToolLoop),
+				Structured: c.timed(ctx, t.Name, c.GoalOutput),
+			}
 		}()
 	}
 	wg.Wait()
@@ -168,6 +177,19 @@ type completion struct {
 }
 
 func (c *Client) complete(ctx context.Context, body map[string]any) (*completion, error) {
+	resp, err := c.post(ctx, "/chat/completions", body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var out completion
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &out, nil
+}
+
+func (c *Client) post(ctx context.Context, endpoint string, body map[string]any) (*http.Response, error) {
 	// Test exactly this model: without this LiteLLM would fall back to the
 	// next model and hide the failure.
 	body["disable_fallbacks"] = true
@@ -175,7 +197,7 @@ func (c *Client) complete(ctx context.Context, body map[string]any) (*completion
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
@@ -185,19 +207,15 @@ func (c *Client) complete(ctx context.Context, body map[string]any) (*completion
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
 	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		if err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%s: %s", resp.Status, errorMessage(raw))
 	}
-	var out completion
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	return &out, nil
+	return resp, nil
 }
 
 // errorMessage pulls the message out of an OpenAI-style error body and keeps

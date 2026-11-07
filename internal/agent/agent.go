@@ -15,7 +15,7 @@ type Task struct {
 	// Dir is the job's worktree; the agent works only there.
 	Dir    string
 	Prompt string
-	// Model is the router alias the agent asks for, e.g. "smart".
+	// Model is a router alias in API mode, or provider/model for subscription CLIs.
 	Model string
 	// BaseURL is the router's OpenAI-compatible endpoint.
 	BaseURL string
@@ -25,6 +25,10 @@ type Task struct {
 	// LastMessageFile is where the agent should write its final message,
 	// which becomes the job's summary.
 	LastMessageFile string
+	// OutputSchemaFile requests a structured final response for goal steps.
+	OutputSchemaFile string
+	// ReadOnly is used for the independent completion review.
+	ReadOnly bool
 }
 
 // Agent builds the command that runs a coding agent on a task.
@@ -56,10 +60,14 @@ func (c *Codex) Name() string { return "codex" }
 
 // Command implements Agent. The prompt is read from stdin.
 func (c *Codex) Command(ctx context.Context, t Task) *exec.Cmd {
+	sandbox := "workspace-write"
+	if t.ReadOnly {
+		sandbox = "read-only"
+	}
 	args := []string{
 		"exec",
 		"--cd", t.Dir,
-		"--sandbox", "workspace-write",
+		"--sandbox", sandbox,
 		"--color", "never",
 		"-c", `model_provider="dotshift"`,
 		"-c", `model_providers.dotshift.name="dotshift"`,
@@ -70,6 +78,9 @@ func (c *Codex) Command(ctx context.Context, t Task) *exec.Cmd {
 		"--output-last-message", t.LastMessageFile,
 	}
 	args = append(args, c.Args...)
+	if t.OutputSchemaFile != "" {
+		args = append(args, "--output-schema", t.OutputSchemaFile)
+	}
 	args = append(args, "-")
 	cmd := exec.CommandContext(ctx, c.Path, args...)
 	cmd.Dir = t.Dir

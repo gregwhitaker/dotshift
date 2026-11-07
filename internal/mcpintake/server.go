@@ -3,11 +3,11 @@ package mcpintake
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/gregwhitaker/dotshift/internal/jobs"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -55,7 +55,11 @@ func NewHandler(o Options) (http.Handler, error) {
 		// needs a bearer token, which a rebinding page can't get, and
 		// checkHost below refuses unexpected hosts when PublicURL is set.
 		DisableLocalhostProtection: true,
-		SessionTimeout:             time.Hour,
+		// Jobs persist independently of HTTP sessions. Stateless transport
+		// supports current MCP discovery and reconnects after service restarts.
+		Stateless:    true,
+		JSONResponse: true,
+		Logger:       slog.Default(),
 	})
 	oa := &oauthServer{store: o.Auth, passcode: o.Passcode, logf: logf, codes: map[string]*authCode{}}
 
@@ -65,9 +69,10 @@ func NewHandler(o Options) (http.Handler, error) {
 	for _, p := range []string{"/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource" + mcpPath} {
 		mux.HandleFunc(p, cors(oa.resourceMetadata))
 	}
+	// This is an OAuth authorization server, not an OpenID identity provider.
+	// Publishing OpenID discovery would imply unsupported identity features.
 	for _, p := range []string{
 		"/.well-known/oauth-authorization-server", "/.well-known/oauth-authorization-server" + mcpPath,
-		"/.well-known/openid-configuration", "/.well-known/openid-configuration" + mcpPath, mcpPath + "/.well-known/openid-configuration",
 	} {
 		mux.HandleFunc(p, cors(oa.authServerMetadata))
 	}

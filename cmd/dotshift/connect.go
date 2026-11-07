@@ -109,13 +109,25 @@ func printConnect(ctx context.Context, cfg *config.Config, passcode string) {
 `, cfg.MCP.Listen)
 	}
 	fmt.Printf(`
-2. In ChatGPT: Settings > Apps & Connectors > Advanced settings, turn on
-   Developer mode. Then Settings > Apps & Connectors > Create:
-     MCP server URL:  %s
+2. Open https://chatgpt.com/plugins in your browser.
+   Use + > Add custom MCP server, then enter:
+     Name:            dotshift
+     Connection:      Server URL
+     Server URL:      %s
      Authentication:  OAuth
+   If asked for OAuth client registration, choose dynamic registration (DCR).
+   dotshift registers the client automatically; no static credentials are needed.
+   Review the warning, confirm it, and choose Create as a plugin.
 
-3. ChatGPT opens dotshift's approval page. Enter this passcode to allow it:
+3. Install dotshift from your personal plugins. When its authorization page
+   opens, enter this passcode to approve the connection:
 
      %s
+
+4. Start a Work chat, type @, and select dotshift. Ask it to list your repos
+   and model strategies to verify the connection before starting a goal.
+
+Current setup guide:
+https://developers.openai.com/api/docs/guides/custom-mcp-server
 `, mcpURL, passcode)
 }

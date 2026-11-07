@@ -104,6 +104,46 @@ func printJob(w io.Writer, j *jobs.Job) {
 	fmt.Fprintf(w, "Repo:     %s (%s)\n", j.Repo, j.RepoPath)
 	fmt.Fprintf(w, "Branch:   %s, %d commit(s) on %s\n", j.Branch, j.Commits, short(j.BaseCommit))
 	fmt.Fprintf(w, "Model:    %s\n", j.Model)
+	mode := j.ExecutionMode
+	if mode == "" {
+		mode = "api"
+	}
+	fmt.Fprintf(w, "Mode:     %s\n", mode)
+	if j.Goal != nil {
+		fmt.Fprintf(w, "Goal:     %s, %d completed iteration(s)\n", j.Goal.Phase, j.Goal.Iterations)
+		if j.Goal.MaxIterations > 0 {
+			fmt.Fprintf(w, "Limit:    %d total iterations\n", j.Goal.MaxIterations)
+		}
+		if selection := j.Goal.ModelSelection; selection != nil {
+			fmt.Fprintf(w, "Strategy: %s, %d model switch(es)\n", selection.Strategy, selection.Switches)
+			if selection.ActiveModel != "" {
+				fmt.Fprintf(w, "Active:   %s\n", selection.ActiveModel)
+			}
+			fmt.Fprintf(w, "Choice:   %s\n", selection.Reason)
+			if selection.WaitingUntil != nil {
+				fmt.Fprintf(w, "Retry at: %s\n", selection.WaitingUntil.UTC().Format(time.RFC3339))
+			}
+		}
+		if a := j.Goal.Adaptive; a != nil {
+			fmt.Fprintf(w, "Adaptive: tier %d, %d escalation(s), threshold %d\n", a.Level+1, a.Escalations, a.EscalateAfter)
+			if a.Reason != "" {
+				fmt.Fprintf(w, "Reason:   %s\n", a.Reason)
+			}
+		}
+		if reviewer := j.Goal.ReviewerSelection; reviewer != nil {
+			fmt.Fprintf(w, "Reviewer: %s (%s)\n", reviewer.ActiveModel, j.Goal.ReviewerModel)
+			if reviewer.WaitingUntil != nil {
+				fmt.Fprintf(w, "Review retry at: %s\n", reviewer.WaitingUntil.UTC().Format(time.RFC3339))
+			}
+		}
+		if b := j.Goal.Budget; b != nil {
+			limit := fmt.Sprintf("$%.6f", b.LimitUSD)
+			if b.LimitUSD == 0 {
+				limit = "disabled"
+			}
+			fmt.Fprintf(w, "Spending: $%.6f reported, cap %s; %d request(s), %d awaiting cost\n", b.SpentUSD, limit, b.Requests, b.PendingRequests)
+		}
+	}
 	if j.Parent != "" {
 		fmt.Fprintf(w, "Follows:  job %s\n", j.Parent)
 	}
@@ -134,7 +174,9 @@ func printJob(w io.Writer, j *jobs.Job) {
 	if j.Status == jobs.Done && j.Commits > 0 {
 		fmt.Fprintf(w, "\nReview it with: git -C %s log -p %s..%s\n", j.RepoPath, short(j.BaseCommit), j.Branch)
 	}
-	if j.Status.Terminal() && j.Status != jobs.Done && j.Worktree != "" {
+	if j.Goal != nil && j.Status != jobs.Done {
+		fmt.Fprintln(w, "\nProgress is saved. Queued goals resume with `dotshift serve`; blocked or cancelled goals can use the resume_goal MCP tool.")
+	} else if j.Status.Terminal() && j.Status != jobs.Done && j.Worktree != "" {
 		fmt.Fprintf(w, "\nThe worktree is kept for a look; `dotshift clean %s` removes it.\n", j.ID)
 	}
 }

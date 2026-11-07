@@ -36,6 +36,10 @@ func TestTargets(t *testing.T) {
 // chats but ignores tools, anything else is a provider error.
 func fakeRouter(t *testing.T) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/responses" {
+			fakeResponses(t, w, r)
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer sk-test" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return

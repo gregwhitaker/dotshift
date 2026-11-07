@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gregwhitaker/dotshift/internal/config"
+	"github.com/gregwhitaker/dotshift/internal/jobs"
 	"github.com/gregwhitaker/dotshift/internal/litellm"
 	"github.com/gregwhitaker/dotshift/internal/router"
 	usagelog "github.com/gregwhitaker/dotshift/internal/usage"
@@ -65,8 +66,13 @@ func listenUsage(ctx context.Context, path string, cfg *config.Config, r *router
 		ln.Close()
 		return nil, err
 	}
+	store, err := jobs.OpenStore(filepath.Join(dir, "jobs.db"))
+	if err != nil {
+		ln.Close()
+		return nil, err
+	}
 	mux := http.NewServeMux()
-	mux.Handle("/usage", &usagelog.Receiver{Path: filepath.Join(dir, usagelog.File), Token: token})
+	mux.Handle("/usage", &usagelog.Receiver{Path: filepath.Join(dir, usagelog.File), Token: token, OnRecords: store.RecordUsage})
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = srv.Serve(ln) }()
 	port := ln.Addr().(*net.TCPAddr).Port
@@ -76,6 +82,7 @@ func listenUsage(ctx context.Context, path string, cfg *config.Config, r *router
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
+		_ = store.Close()
 	}, nil
 }
 
@@ -128,6 +135,10 @@ func runUsage(path string, args []string) error {
 	cfg, err := config.Load(path)
 	if err != nil {
 		return err
+	}
+	if cfg.UsesSubscriptions() {
+		fmt.Println("Subscription mode uses CLI plan allowances. USD costs and remaining allowance are not metered by dotshift; check the providers' own usage screens. Use `dotshift jobs` for progress and observed limit failures.")
+		return nil
 	}
 	dir, err := stateDir(path)
 	if err != nil {

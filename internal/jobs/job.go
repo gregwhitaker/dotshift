@@ -23,11 +23,12 @@ const (
 	Done         Status = "done"
 	Failed       Status = "failed"
 	Cancelled    Status = "cancelled"
+	Blocked      Status = "blocked"
 )
 
 // Terminal reports whether a job in this status will not change again.
 func (s Status) Terminal() bool {
-	return s == Done || s == Failed || s == Cancelled
+	return s == Done || s == Failed || s == Cancelled || s == Blocked
 }
 
 // Request is what an intake asks the runner to do.
@@ -37,6 +38,11 @@ type Request struct {
 	Prompt string
 	// Model is a router alias. Empty means the configured default.
 	Model string
+	// Strategy selects models within the alias for a project goal.
+	Strategy      string
+	ReviewerModel string
+	EscalateAfter int
+	MaxCostUSD    *float64
 	// Branch is the new branch the job works on. Empty means dotshift/<id>.
 	Branch string
 	// Base is the commit-ish the branch starts from. Empty means the repo's HEAD.
@@ -46,6 +52,10 @@ type Request struct {
 	// the earlier job was asked and what it reported. Prompt is the new input.
 	// Repo, Branch and Base are ignored.
 	Continue string
+	// Goal keeps working and testing until the project goal passes review.
+	Goal bool
+	// MaxIterations limits completed coding/test cycles. Zero means unlimited.
+	MaxIterations int
 }
 
 // Job is a job's recorded state.
@@ -55,7 +65,9 @@ type Job struct {
 	RepoPath string
 	Prompt   string
 	Model    string
-	Branch   string
+	// ExecutionMode is pinned at creation; empty denotes a legacy API job.
+	ExecutionMode string
+	Branch        string
 	// BaseCommit is the commit the branch started from.
 	BaseCommit string
 	Worktree   string
@@ -83,12 +95,19 @@ type Job struct {
 	FinishedAt time.Time
 	// Parent is the job this one follows up on, if any.
 	Parent string
+	// Goal holds durable progress for an autonomous project goal. Ordinary
+	// jobs created before goals were supported leave it nil.
+	Goal *GoalProgress
+	// RunToken fences a goal worker from a later worker that resumes it.
+	RunToken string
 }
 
 // RepoInfo describes an allowlisted repo.
 type RepoInfo struct {
-	Name string
-	Path string
+	Name        string
+	Path        string
+	TestCommand string
+	Managed     bool
 	// HasTests is true when the repo has a test command jobs run.
 	HasTests bool
 }
@@ -96,7 +115,10 @@ type RepoInfo struct {
 // Service is the job runner as intakes see it.
 type Service interface {
 	// Repos lists the repos jobs may run in.
-	Repos() []RepoInfo
+	Repos(ctx context.Context) ([]RepoInfo, error)
+	ProjectOptions() ProjectOptions
+	CreateProject(ctx context.Context, req ProjectRequest) (*Project, error)
+	RegisterProject(ctx context.Context, req ProjectRequest) (*Project, error)
 	// Submit validates a request, creates the job's worktree and starts the
 	// agent in the background. It returns once the job is recorded.
 	Submit(ctx context.Context, req Request) (*Job, error)
@@ -107,4 +129,6 @@ type Service interface {
 	Cancel(ctx context.Context, id string) error
 	// Wait blocks until the job finishes or ctx ends.
 	Wait(ctx context.Context, id string) (*Job, error)
+	ResumeGoal(ctx context.Context, req ResumeGoalRequest) (*Job, error)
+	Strategies(ctx context.Context) (*StrategyCatalog, error)
 }

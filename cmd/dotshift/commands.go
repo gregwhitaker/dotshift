@@ -85,16 +85,25 @@ func newRunner(cfg *config.Config, r *router.Router, dir string) (*jobs.Runner, 
 	if err != nil {
 		return nil, nil, err
 	}
-	a, err := agent.New(cfg.Jobs.Agent)
+	var a agent.Agent
+	if cfg.UsesSubscriptions() {
+		a = &agent.Subscriptions{CodexPath: cfg.Jobs.Agent.Command, ClaudePath: cfg.Jobs.ClaudeCommand}
+	} else {
+		a, err = agent.New(cfg.Jobs.Agent)
+	}
 	if err != nil {
 		store.Close()
 		return nil, nil, err
 	}
-	key, err := router.MasterKey(cfg, dir)
-	if err != nil {
-		store.Close()
-		return nil, nil, err
+	var key, baseURL string
+	if !cfg.UsesSubscriptions() {
+		key, err = router.MasterKey(cfg, dir)
+		if err != nil {
+			store.Close()
+			return nil, nil, err
+		}
+		baseURL = r.BaseURL()
 	}
-	runner := &jobs.Runner{Config: cfg, Store: store, Agent: a, BaseURL: r.BaseURL(), APIKey: key, StateDir: dir}
+	runner := &jobs.Runner{Config: cfg, Store: store, Agent: a, BaseURL: baseURL, APIKey: key, StateDir: dir}
 	return runner, func() { store.Close() }, nil
 }

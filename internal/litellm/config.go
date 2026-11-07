@@ -2,8 +2,6 @@
 package litellm
 
 import (
-	"fmt"
-
 	"gopkg.in/yaml.v3"
 
 	"github.com/gregwhitaker/dotshift/internal/config"
@@ -43,7 +41,8 @@ type LiteLLMSettings struct {
 	// receive usage records (see package usage).
 	Callbacks []string `yaml:"callbacks,omitempty"`
 	// TurnOffMessageLogging keeps prompts and responses out of callbacks.
-	TurnOffMessageLogging bool `yaml:"turn_off_message_logging,omitempty"`
+	TurnOffMessageLogging       bool `yaml:"turn_off_message_logging,omitempty"`
+	IncludeCostInStreamingUsage bool `yaml:"include_cost_in_streaming_usage"`
 }
 
 // UsageCallback is the LiteLLM callback that posts usage records to
@@ -53,7 +52,7 @@ const UsageCallback = "generic_api"
 // FallbackName is the model name given to the nth model (1-based) after an
 // alias's primary, e.g. "smart~1". Clients normally only call the alias.
 func FallbackName(alias string, n int) string {
-	return fmt.Sprintf("%s~%d", alias, n)
+	return config.RouteName(alias, n)
 }
 
 // Build converts a validated dotshift config into a LiteLLM document.
@@ -61,7 +60,7 @@ func FallbackName(alias string, n int) string {
 // the generated file. The master key reaches the proxy as the
 // LITELLM_MASTER_KEY environment variable instead (see package router).
 func Build(c *config.Config) Document {
-	doc := Document{LiteLLMSettings: LiteLLMSettings{DropParams: true}}
+	doc := Document{LiteLLMSettings: LiteLLMSettings{DropParams: true, IncludeCostInStreamingUsage: true}}
 	if c.Router.UsageEnabled() {
 		doc.LiteLLMSettings.Callbacks = []string{UsageCallback}
 		doc.LiteLLMSettings.TurnOffMessageLogging = true

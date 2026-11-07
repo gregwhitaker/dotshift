@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -24,13 +25,16 @@ func TestMain(m *testing.M) {
 }
 
 func fakeAgent(mode string) int {
-	if os.Getenv(APIKeyEnv) != "sk-test" {
+	if os.Getenv(APIKeyEnv) != "sk-test" && !strings.HasPrefix(mode, "goal_api") {
 		fmt.Println("fake agent: missing router key")
 		return 9
 	}
 	prompt, _ := readAll(os.Stdin)
 	fmt.Println("fake agent got:", strings.SplitN(prompt, "\n", 2)[0])
 	summary := os.Getenv("FAKE_SUMMARY")
+	if strings.HasPrefix(mode, "goal_") {
+		return fakeGoalAgent(mode, prompt, summary)
+	}
 	switch mode {
 	case "edit":
 		os.WriteFile("hello.txt", []byte("hello from the agent\n"), 0o644)
@@ -71,7 +75,7 @@ func (f fake) Name() string { return "fake" }
 func (f fake) Command(ctx context.Context, t agent.Task) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, os.Args[0])
 	cmd.Dir = t.Dir
-	cmd.Env = append(os.Environ(), "DOTSHIFT_FAKE_AGENT="+f.mode, "FAKE_SUMMARY="+t.LastMessageFile)
+	cmd.Env = append(os.Environ(), "DOTSHIFT_FAKE_AGENT="+f.mode, "FAKE_SUMMARY="+t.LastMessageFile, "FAKE_REVIEW="+strconv.FormatBool(t.ReadOnly), "FAKE_API_BASE="+t.BaseURL, "FAKE_MODEL="+t.Model)
 	return cmd
 }
 
@@ -99,7 +103,9 @@ func setup(t *testing.T, mode string, test string) (*Runner, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	return &Runner{Config: cfg, Store: store, Agent: fake{mode}, BaseURL: "http://127.0.0.1:4000/v1", APIKey: "sk-test", StateDir: state}, repo
+	runner := &Runner{Config: cfg, Store: store, Agent: fake{mode}, BaseURL: "http://127.0.0.1:4000/v1", APIKey: "sk-test", StateDir: state}
+	t.Cleanup(func() { runner.Shutdown(context.Background(), "test finished") })
+	return runner, repo
 }
 
 func run(t *testing.T, dir string, name string, args ...string) string {

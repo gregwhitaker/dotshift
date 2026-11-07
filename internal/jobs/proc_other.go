@@ -20,5 +20,7 @@ func terminate(pid int) error {
 	return p.Kill()
 }
 
+func killGroup(pid int) error { return terminate(pid) }
+
 // alive can't be checked cheaply here, so assume the runner is still there.
 func alive(pid int) bool { return pid > 0 }

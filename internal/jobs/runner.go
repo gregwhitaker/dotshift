@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -39,54 +40,74 @@ type Runner struct {
 	// Echo, when set, also receives every job's agent output.
 	Echo io.Writer
 
-	mu      sync.Mutex
-	running map[string]*active
+	mu       sync.Mutex
+	running  map[string]*active
+	stopping bool
 }
 
 type active struct {
 	cancel context.CancelFunc
 	done   chan struct{}
+	goal   bool
 }
 
 var _ Service = (*Runner)(nil)
 
 // Repos implements Service.
-func (r *Runner) Repos() []RepoInfo {
-	var out []RepoInfo
-	for _, name := range r.Config.RepoNames() {
-		repo := r.Config.Repos[name]
-		out = append(out, RepoInfo{Name: name, Path: expandHome(repo.Path), HasTests: repo.Test != ""})
+func (r *Runner) Repos(ctx context.Context) ([]RepoInfo, error) {
+	repos, err := r.allowedRepos(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return out
+	out := make([]RepoInfo, 0, len(repos))
+	for name, repo := range repos {
+		_, configured := r.Config.Repos[name]
+		out = append(out, RepoInfo{Name: name, Path: expandHome(repo.Path), HasTests: repo.Test != "", TestCommand: repo.Test, Managed: !configured})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
 }
 
 // resolveRepo finds the allowlisted repo a request names, by name or path.
-func (r *Runner) resolveRepo(ref string) (string, config.Repo, error) {
+func (r *Runner) resolveRepo(ctx context.Context, ref string) (string, config.Repo, error) {
 	if ref == "" {
 		return "", config.Repo{}, errors.New("no repo given")
 	}
-	if repo, ok := r.Config.Repos[ref]; ok {
+	repos, err := r.allowedRepos(ctx)
+	if err != nil {
+		return "", config.Repo{}, err
+	}
+	if repo, ok := repos[ref]; ok {
 		return ref, repo, nil
 	}
+	names := make([]string, 0, len(repos))
+	for name := range repos {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	want, err := filepath.Abs(expandHome(ref))
 	if err == nil {
 		want = realPath(want)
-		for _, name := range r.Config.RepoNames() {
-			repo := r.Config.Repos[name]
+		for _, name := range names {
+			repo := repos[name]
 			if realPath(expandHome(repo.Path)) == want {
 				return name, repo, nil
 			}
 		}
 	}
-	names := r.Config.RepoNames()
 	if len(names) == 0 {
-		return "", config.Repo{}, fmt.Errorf("repo %q is not allowlisted; add it under repos: in dotshift.yaml", ref)
+		return "", config.Repo{}, fmt.Errorf("repo %q is not allowlisted; use create_project or register_project under projects.root, or add it under repos: in dotshift.yaml", ref)
 	}
 	return "", config.Repo{}, fmt.Errorf("repo %q is not allowlisted (allowed: %s)", ref, strings.Join(names, ", "))
 }
 
 // Submit implements Service.
 func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopping {
+		return nil, errors.New("dotshift is stopping")
+	}
 	if strings.TrimSpace(req.Prompt) == "" {
 		return nil, errors.New("no instructions given")
 	}
@@ -108,9 +129,18 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 			req.Model = p.Model
 		}
 	}
-	name, repo, err := r.resolveRepo(req.Repo)
+	name, repo, err := r.resolveRepo(ctx, req.Repo)
 	if err != nil {
 		return nil, err
+	}
+	if req.MaxIterations < 0 || (!req.Goal && req.MaxIterations != 0) {
+		return nil, errors.New("max_iterations must be non-negative and is only supported for goals")
+	}
+	if req.Goal && strings.TrimSpace(repo.Test) == "" {
+		return nil, fmt.Errorf("repos.%s.test must be configured before starting a goal", name)
+	}
+	if !req.Goal && (req.Strategy != "" || req.ReviewerModel != "" || req.EscalateAfter != 0 || req.MaxCostUSD != nil) {
+		return nil, errors.New("model strategies, reviewers, and spending caps are only supported for project goals")
 	}
 	model := req.Model
 	if model == "" {
@@ -118,6 +148,42 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 	}
 	if _, ok := r.Config.Aliases[model]; !ok {
 		return nil, fmt.Errorf("model %q is not an alias (have: %s)", model, strings.Join(r.Config.AliasNames(), ", "))
+	}
+	strategy := req.Strategy
+	reviewer := req.ReviewerModel
+	escalateAfter := req.EscalateAfter
+	maxCost := r.Config.Jobs.MaxCostUSD
+	if req.Goal {
+		if strategy == "" {
+			strategy = r.Config.Jobs.Strategy
+		}
+		if strategy == "" {
+			strategy = config.StrategyAlias
+		}
+		if _, err := r.Config.StrategyModels(model, strategy); err != nil {
+			return nil, err
+		}
+		if reviewer == "" {
+			reviewer = r.Config.Jobs.ReviewerModel
+		}
+		if err := r.Config.ValidateReviewer(model, strategy, reviewer); err != nil {
+			return nil, err
+		}
+		if escalateAfter < 0 || (escalateAfter != 0 && strategy != config.StrategyAdaptive) {
+			return nil, errors.New("escalate_after must be positive and requires the adaptive strategy")
+		}
+		if escalateAfter == 0 {
+			escalateAfter = r.Config.Jobs.EscalateAfter
+		}
+		if escalateAfter == 0 {
+			escalateAfter = 2
+		}
+		if req.MaxCostUSD != nil {
+			maxCost = *req.MaxCostUSD
+		}
+		if err := r.validateGoalBudget(maxCost); err != nil {
+			return nil, err
+		}
 	}
 	top, err := git(ctx, expandHome(repo.Path), "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -170,9 +236,29 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 
 	j := &Job{
 		ID: id, Repo: name, RepoPath: top, Prompt: req.Prompt, Model: model,
-		Branch: branch, BaseCommit: baseCommit, Worktree: filepath.Join(wtDir, id),
+		ExecutionMode: r.Config.ExecutionMode(),
+		Branch:        branch, BaseCommit: baseCommit, Worktree: filepath.Join(wtDir, id),
 		Status: Queued, LogPath: filepath.Join(logDir, id+".log"),
 		RunnerPID: os.Getpid(), CreatedAt: time.Now(),
+	}
+	if req.Goal {
+		j.Goal = &GoalProgress{Phase: goalWorking, MaxIterations: req.MaxIterations}
+		if strategy != config.StrategyAlias || reviewer != "" || maxCost > 0 || r.Config.UsesSubscriptions() {
+			j.Goal.ModelSelection = &ModelSelection{Strategy: strategy}
+		}
+		if reviewer != "" {
+			j.Goal.ReviewerModel, j.Goal.ReviewerSelection = reviewer, &ModelSelection{Strategy: config.StrategyAlias}
+		}
+		if strategy == config.StrategyAdaptive {
+			j.Goal.Adaptive = &AdaptiveProgress{EscalateAfter: escalateAfter}
+		}
+		if maxCost > 0 {
+			j.Goal.Budget = &BudgetProgress{LimitUSD: maxCost, RemainingUSD: maxCost, Models: []ModelSpend{}}
+		}
+		j.RunToken, err = newID()
+		if err != nil {
+			return nil, err
+		}
 	}
 	add := []string{"worktree", "add", "--quiet", "-b", branch, j.Worktree, baseCommit}
 	prompt := req.Prompt
@@ -193,31 +279,66 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 		return nil, err
 	}
 
-	// The job outlives the request that started it.
+	snapshot := cloneJob(j)
+	r.startLocked(j, repo, prompt)
+	return snapshot, nil
+}
+
+// startLocked starts a worker while mu is held, so shutdown cannot miss it.
+func (r *Runner) startLocked(j *Job, repo config.Repo, prompt string) {
 	jobCtx, cancel := context.WithCancel(context.Background())
-	a := &active{cancel: cancel, done: make(chan struct{})}
-	r.mu.Lock()
+	a := &active{cancel: cancel, done: make(chan struct{}), goal: j.Goal != nil}
 	if r.running == nil {
 		r.running = map[string]*active{}
 	}
-	r.running[id] = a
-	r.mu.Unlock()
-	snapshot := *j
+	r.running[j.ID] = a
 	go func() {
 		defer close(a.done)
 		defer cancel()
-		r.run(jobCtx, j, repo, prompt)
+		if j.Goal != nil {
+			r.runGoal(jobCtx, j)
+		} else {
+			r.run(jobCtx, j, repo, prompt)
+		}
 		r.mu.Lock()
-		delete(r.running, id)
+		delete(r.running, j.ID)
 		r.mu.Unlock()
 	}()
-	return &snapshot, nil
+}
+
+func cloneJob(j *Job) *Job {
+	snapshot := *j
+	if j.Goal != nil {
+		progress := *j.Goal
+		snapshot.Goal = &progress
+		if j.Goal.ModelSelection != nil {
+			selection := *j.Goal.ModelSelection
+			snapshot.Goal.ModelSelection = &selection
+		}
+		if j.Goal.ReviewerSelection != nil {
+			selection := *j.Goal.ReviewerSelection
+			snapshot.Goal.ReviewerSelection = &selection
+		}
+		if j.Goal.Adaptive != nil {
+			adaptive := *j.Goal.Adaptive
+			snapshot.Goal.Adaptive = &adaptive
+		}
+		if j.Goal.Budget != nil {
+			budget := *j.Goal.Budget
+			budget.Models = append([]ModelSpend(nil), budget.Models...)
+			snapshot.Goal.Budget = &budget
+		}
+	}
+	return &snapshot
 }
 
 // run takes a recorded job through the agent, tests and commit.
 func (r *Runner) run(ctx context.Context, j *Job, repo config.Repo, prompt string) {
 	bg := context.Background() // record the outcome even after cancellation
 	finish := func(st Status, msg string) {
+		if cur, err := r.Store.Get(bg, j.ID); err == nil && cur.Status == Cancelled {
+			st, msg = Cancelled, cur.Error
+		}
 		j.Status, j.Error, j.FinishedAt, j.AgentPID = st, msg, time.Now(), 0
 		if err := r.Store.Save(bg, j); err != nil {
 			fmt.Fprintf(os.Stderr, "dotshift: saving job %s: %v\n", j.ID, err)
@@ -238,13 +359,22 @@ func (r *Runner) run(ctx context.Context, j *Job, repo config.Repo, prompt strin
 	agentCtx, cancelTimeout := context.WithTimeout(ctx, r.Config.Jobs.Timeout.Duration)
 	defer cancelTimeout()
 	lastMessage := filepath.Join(filepath.Dir(j.LogPath), j.ID+".summary")
-	cmd := r.Agent.Command(agentCtx, agent.Task{
-		Dir: j.Worktree, Prompt: prompt, Model: j.Model, BaseURL: r.BaseURL,
+	model := j.Model
+	if r.Config.UsesSubscriptions() {
+		model = r.Config.Aliases[j.Model][0]
+	}
+	cmd, finishAgent, err := agent.Prepare(agentCtx, r.Agent, agent.Task{
+		Dir: j.Worktree, Prompt: prompt, Model: model, BaseURL: r.BaseURL,
 		APIKeyEnv: APIKeyEnv, LastMessageFile: lastMessage,
-	})
+	}, out, cancelTimeout)
+	if err != nil {
+		finish(Failed, err.Error())
+		return
+	}
 	cmd.Stdin = strings.NewReader(prompt + promptSuffix)
-	cmd.Stdout, cmd.Stderr = out, out
-	cmd.Env = append(cmd.Environ(), APIKeyEnv+"="+r.APIKey)
+	if !r.Config.UsesSubscriptions() {
+		cmd.Env = append(cmd.Environ(), APIKeyEnv+"="+r.APIKey)
+	}
 	detach(cmd)
 	cmd.WaitDelay = 10 * time.Second
 
@@ -264,6 +394,9 @@ func (r *Runner) run(ctx context.Context, j *Job, repo config.Repo, prompt strin
 	}
 	j.Status = Running
 	waitErr := cmd.Wait()
+	if err := finishAgent(); err != nil {
+		waitErr = err
+	}
 	if cmd.ProcessState != nil {
 		j.ExitCode = cmd.ProcessState.ExitCode()
 	}
@@ -361,6 +494,12 @@ func (r *Runner) reconcile(ctx context.Context, j *Job) {
 	if j.Status.Terminal() || alive(j.RunnerPID) {
 		return
 	}
+	if j.Goal != nil {
+		// Reading status does not take ownership. serve claims the persisted
+		// goal and resumes its worktree when it starts.
+		j.Status = Queued
+		return
+	}
 	j.Status, j.Error, j.FinishedAt = Failed, "dotshift stopped while the job was running", time.Now()
 	_ = r.Store.Save(ctx, j)
 }
@@ -368,19 +507,28 @@ func (r *Runner) reconcile(ctx context.Context, j *Job) {
 // Cancel implements Service. It works for jobs run by this process and by
 // other dotshift processes sharing the store.
 func (r *Runner) Cancel(ctx context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	j, err := r.Get(ctx, id)
 	if err != nil {
 		return err
 	}
-	if j.Status.Terminal() {
+	if j.Status.Terminal() && !(j.Goal != nil && j.Status == Blocked) {
 		return fmt.Errorf("job %s already %s", id, j.Status)
+	}
+	if j.Goal != nil {
+		if err := r.Store.cancelGoal(ctx, j); err != nil {
+			return err
+		}
+		if a := r.running[id]; a != nil {
+			a.cancel()
+		}
+		return terminate(j.AgentPID)
 	}
 	if err := r.Store.SetStatus(ctx, id, Cancelled, "cancelled"); err != nil {
 		return err
 	}
-	r.mu.Lock()
 	a := r.running[id]
-	r.mu.Unlock()
 	if a != nil {
 		a.cancel()
 		return nil
@@ -425,6 +573,8 @@ func (r *Runner) Wait(ctx context.Context, id string) (*Job, error) {
 // Clean removes the worktree a failed or cancelled job left behind, and its
 // branch if the branch has no commits of its own.
 func (r *Runner) Clean(ctx context.Context, id string) (*Job, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	j, err := r.Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -435,8 +585,30 @@ func (r *Runner) Clean(ctx context.Context, id string) (*Job, error) {
 	if j.Worktree == "" {
 		return j, nil
 	}
+	status, message, finished := j.Status, j.Error, j.FinishedAt
+	if j.Goal != nil {
+		if r.running[id] != nil || alive(j.RunnerPID) {
+			return nil, errors.New("goal worker is still stopping; wait before cleaning its worktree")
+		}
+		// Claim the goal while cleaning so a concurrent resume cannot start
+		// an agent in the worktree that is about to be removed.
+		if err := r.Store.claimGoal(ctx, j); err != nil {
+			return nil, err
+		}
+	}
 	n, _ := git(ctx, j.RepoPath, "rev-list", "--count", j.BaseCommit+".."+j.Branch)
 	r.removeWorktree(ctx, j, n == "0")
+	if j.Goal != nil {
+		j.Status, j.Error, j.FinishedAt = status, message, finished
+		j.RunnerPID, j.AgentPID = 0, 0
+		if err := r.Store.saveGoal(context.Background(), j); err != nil {
+			return nil, err
+		}
+		if j.Worktree != "" {
+			return j, fmt.Errorf("could not remove goal worktree %s", j.Worktree)
+		}
+		return j, nil
+	}
 	return j, r.Store.Save(ctx, j)
 }
 
@@ -471,13 +643,16 @@ func (r *Runner) followUpPrompt(ctx context.Context, parent *Job, input string) 
 // recorded how it ended, or ctx ends.
 func (r *Runner) Shutdown(ctx context.Context, reason string) {
 	r.mu.Lock()
+	r.stopping = true
 	running := make(map[string]*active, len(r.running))
 	for id, a := range r.running {
 		running[id] = a
 	}
 	r.mu.Unlock()
 	for id, a := range running {
-		_ = r.Store.SetStatus(ctx, id, Cancelled, reason)
+		if !a.goal {
+			_ = r.Store.SetStatus(ctx, id, Cancelled, reason)
+		}
 		a.cancel()
 	}
 	for _, a := range running {
@@ -536,7 +711,12 @@ func realPath(p string) string {
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		return r
 	}
-	return filepath.Clean(p)
+	p = filepath.Clean(p)
+	parent := filepath.Dir(p)
+	if parent == p {
+		return p
+	}
+	return filepath.Join(realPath(parent), filepath.Base(p))
 }
 
 func within(path, dir string) bool {

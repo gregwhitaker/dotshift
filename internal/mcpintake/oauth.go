@@ -199,7 +199,7 @@ h1{font-size:1.4rem} .err{color:#c62828} input[type=password]{width:100%;font-si
 button{font-size:1rem;padding:.5rem 1.2rem;margin-right:.5rem} code{font-size:.95em}
 </style></head><body>
 <h1>Connect {{.Client}} to dotshift</h1>
-<p>{{.Client}} is asking to start, follow and cancel coding tasks in the repos you allowlisted, on this machine.</p>
+<p>{{.Client}} is asking to start, follow and cancel coding tasks in allowed repositories on this machine. If you enabled projects.root, it can also create and register projects in that folder.</p>
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 <form method="post" action="{{.Action}}">
 {{range $k, $v := .Params}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}

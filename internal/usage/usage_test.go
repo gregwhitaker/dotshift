@@ -26,8 +26,8 @@ func TestDecode(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Record{
-		{Time: time.Unix(1791516067, 5e8).UTC(), Alias: "smart", Route: "smart", Model: "anthropic/claude-sonnet-5-5", Error: "litellm.RateLimitError: slow down"},
-		{Time: time.Unix(1791516068, 0).UTC(), Alias: "smart", Route: "smart~1", Model: "openai/gpt-5", OK: true, InputTokens: 1200, OutputTokens: 300, Cost: 0.0045},
+		{Time: time.Unix(1791516067, 5e8).UTC(), Alias: "smart", Route: "smart", Model: "anthropic/claude-sonnet-5-5", CostKnown: true, Error: "litellm.RateLimitError: slow down"},
+		{Time: time.Unix(1791516068, 0).UTC(), Alias: "smart", Route: "smart~1", Model: "openai/gpt-5", OK: true, InputTokens: 1200, OutputTokens: 300, Cost: 0.0045, CostKnown: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Decode =\n%+v\nwant\n%+v", got, want)
@@ -36,6 +36,27 @@ func TestDecode(t *testing.T) {
 	nd, err := Decode([]byte(`{"model_group":"fast","model":"gemini/x","status":"success"}` + "\n" + `{"model_group":"fast","model":"gemini/x","status":"success"}`))
 	if err != nil || len(nd) != 2 {
 		t.Errorf("ndjson Decode = %v, %v", nd, err)
+	}
+}
+
+func TestCostReceiptMustBePresentAndFinal(t *testing.T) {
+	for _, tc := range []struct {
+		fields string
+		known  bool
+		cost   float64
+	}{
+		{``, false, 0}, {`,"response_cost":null`, false, 0},
+		{`,"response_cost":-1`, false, 0}, {`,"response_cost":0`, true, 0},
+		{`,"response_cost":0.25,"cost_finalized":false`, false, 0},
+		{`,"response_cost":0.25,"cost_finalized":true`, true, 0.25},
+	} {
+		records, err := Decode([]byte(`{"model":"openai/test","metadata":{"spend_logs_metadata":{"dotshift_request_id":"receipt-1"}}` + tc.fields + `}`))
+		if err != nil || len(records) != 1 {
+			t.Fatalf("decode: %v, %v", records, err)
+		}
+		if r := records[0]; r.CostKnown != tc.known || r.Cost != tc.cost || r.RequestID != "receipt-1" {
+			t.Fatalf("%s: %+v", tc.fields, r)
+		}
 	}
 }
 
