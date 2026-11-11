@@ -523,6 +523,13 @@ func (r *Runner) goalAgent(ctx context.Context, j *Job, repo config.Repo, schema
 	last.Close()
 	defer os.Remove(last.Name())
 	prompt := goalPrompt(j, repo.Test, review)
+	if review {
+		evidence, err := reviewEvidence(ctx, j)
+		if err != nil {
+			return GoalReport{}, err
+		}
+		prompt += evidence
+	}
 	cmd, finishAgent, err := agent.Prepare(ctx, r.Agent, agent.Task{
 		Dir: j.Worktree, Prompt: prompt, Model: model, BaseURL: baseURL,
 		APIKeyEnv: APIKeyEnv, LastMessageFile: last.Name(), OutputSchemaFile: schema, ReadOnly: review,
@@ -530,10 +537,14 @@ func (r *Runner) goalAgent(ctx context.Context, j *Job, repo config.Repo, schema
 	if err != nil {
 		return GoalReport{}, err
 	}
-	cmd.Stdin = strings.NewReader(prompt + promptSuffix)
+	if !review {
+		prompt += promptSuffix
+	}
+	cmd.Stdin = strings.NewReader(prompt)
 	if !r.Config.UsesSubscriptions() {
 		cmd.Env = append(cmd.Environ(), APIKeyEnv+"="+apiKey)
 	}
+	cmd.Env = append(cmd.Environ(), "PYTHONDONTWRITEBYTECODE=1")
 	err = r.goalCommand(ctx, j, cmd)
 	cliErr := finishAgent()
 	if gateway != nil {
@@ -575,8 +586,10 @@ func (r *Runner) goalAgent(ctx context.Context, j *Job, repo config.Repo, schema
 
 func goalPrompt(j *Job, testCommand string, review bool) string {
 	role := "Work autonomously toward the project goal. Plan the remaining work, implement the next useful increment, and fix any reported test failures."
+	assessment, remaining := j.Goal.Report.Summary, j.Goal.Report.NextSteps
 	if review {
-		role = "Independently review whether the entire project goal is complete. Inspect the code, tests, and requirements in this read-only checkout. Look for missing behavior, regressions, and tests weakened to conceal failures."
+		role = "Independently review whether the entire project goal is complete in a fresh read-only session. Inspect the code, tests, requirements, and runner-generated diff evidence. Look for missing behavior, regressions, accidental generated files, and tests weakened to conceal failures."
+		assessment, remaining = "Make your own assessment from the requirements, files, diff, and validation evidence.", ""
 	}
 	modelHandoff := ""
 	selection := j.Goal.ModelSelection
@@ -619,7 +632,7 @@ Latest validation result: %s
 The branch contains all earlier work. Preserve it and continue from the current files.
 For a new project, scaffold its application and meaningful tests for the validation command. A placeholder or an empty test suite is not completion evidence.
 Return JSON with status, summary, and next_steps. Use status "continue" for unfinished work or fixable issues, "complete" only when every part of the goal is implemented and verified, and "blocked" only when a specific missing credential, decision, or external dependency requires human input. Explain completion evidence in summary. Keep a concise cumulative progress summary and remaining plan so the next attempt can continue without the earlier conversation. dotshift independently runs validation and reviews completion.`,
-		role, modelHandoff, j.Prompt, j.Goal.Input, j.Goal.Report.Summary, j.Goal.Report.NextSteps, j.Error,
+		role, modelHandoff, j.Prompt, j.Goal.Input, assessment, remaining, j.Error,
 		testCommand, j.TestResult, j.TestOutput)
 }
 
@@ -630,6 +643,7 @@ func (r *Runner) goalTests(ctx context.Context, j *Job, command string, out io.W
 	tail := &tailBuffer{max: 16000}
 	cmd := exec.CommandContext(stepCtx, "sh", "-c", command)
 	cmd.Dir = j.Worktree
+	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
 	cmd.Stdout = io.MultiWriter(out, tail)
 	cmd.Stderr = cmd.Stdout
 	err := r.goalCommand(stepCtx, j, cmd)

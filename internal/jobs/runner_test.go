@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,6 +36,12 @@ func fakeAgent(mode string) int {
 	if strings.HasPrefix(mode, "goal_") {
 		return fakeGoalAgent(mode, prompt, summary)
 	}
+	if os.Getenv("FAKE_REVIEW") == "true" {
+		message := map[string]string{"edit": "Added hello.txt.", "append": "Appended to hello.txt.", "noop": "Nothing to change."}[mode]
+		data, _ := json.Marshal(GoalReport{Status: "complete", Summary: message})
+		os.WriteFile(summary, data, 0o644)
+		return 0
+	}
 	switch mode {
 	case "edit":
 		os.WriteFile("hello.txt", []byte("hello from the agent\n"), 0o644)
@@ -52,6 +59,10 @@ func fakeAgent(mode string) int {
 		return 3
 	case "sleep":
 		time.Sleep(time.Minute)
+	}
+	if data, err := os.ReadFile(summary); err == nil {
+		data, _ = json.Marshal(GoalReport{Status: "complete", Summary: strings.TrimSpace(string(data))})
+		os.WriteFile(summary, data, 0o644)
 	}
 	return 0
 }
@@ -170,22 +181,22 @@ func TestJobCommitsToBranchWithoutTouchingWorkingCopy(t *testing.T) {
 		t.Error("hello.txt appeared in the working copy")
 	}
 	log, _ := os.ReadFile(j.LogPath)
-	if !strings.Contains(string(log), "fake agent got: Add a hello file") {
+	if !strings.Contains(string(log), "fake agent got: Work autonomously") {
 		t.Errorf("log = %q", log)
 	}
 }
 
 func TestJobByPathModelAndBranch(t *testing.T) {
-	r, repo := setup(t, "edit", "")
+	r, repo := setup(t, "edit", "test -f README.md")
 	j := submitAndWait(t, r, Request{Repo: repo, Prompt: "x", Model: "fast", Branch: "feature/hello"})
-	if j.Status != Done || j.Repo != "demo" || j.Model != "fast" || j.Branch != "feature/hello" || j.TestResult != "" {
+	if j.Status != Done || j.Repo != "demo" || j.Model != "fast" || j.Branch != "feature/hello" || j.TestResult != "passed" || j.Goal == nil {
 		t.Fatalf("job = %+v", j)
 	}
 	run(t, repo, "git", "rev-parse", "--verify", "feature/hello")
 }
 
 func TestNoChangesDeletesBranch(t *testing.T) {
-	r, repo := setup(t, "noop", "")
+	r, repo := setup(t, "noop", "test -f README.md")
 	j := submitAndWait(t, r, Request{Repo: "demo", Prompt: "look around"})
 	if j.Status != Done || j.Commits != 0 || j.Summary != "Nothing to change." {
 		t.Fatalf("job = %+v", j)
@@ -196,9 +207,9 @@ func TestNoChangesDeletesBranch(t *testing.T) {
 }
 
 func TestFailedJobKeepsWorktreeUntilCleaned(t *testing.T) {
-	r, repo := setup(t, "fail", "")
+	r, repo := setup(t, "fail", "test -f README.md")
 	j := submitAndWait(t, r, Request{Repo: "demo", Prompt: "break"})
-	if j.Status != Failed || j.ExitCode != 3 || !strings.Contains(j.Error, "exited") {
+	if j.Status != Blocked || !strings.Contains(j.Error, "exit status 3") {
 		t.Fatalf("job = %+v", j)
 	}
 	if _, err := os.Stat(filepath.Join(j.Worktree, "partial.txt")); err != nil {
@@ -217,7 +228,7 @@ func TestFailedJobKeepsWorktreeUntilCleaned(t *testing.T) {
 }
 
 func TestCancel(t *testing.T) {
-	r, _ := setup(t, "sleep", "")
+	r, _ := setup(t, "sleep", "test -f README.md")
 	ctx := context.Background()
 	j, err := r.Submit(ctx, Request{Repo: "demo", Prompt: "take forever"})
 	if err != nil {
@@ -251,7 +262,7 @@ func TestCancel(t *testing.T) {
 }
 
 func TestCancelFromAnotherProcess(t *testing.T) {
-	r, _ := setup(t, "sleep", "")
+	r, _ := setup(t, "sleep", "test -f README.md")
 	ctx := context.Background()
 	j, err := r.Submit(ctx, Request{Repo: "demo", Prompt: "take forever"})
 	if err != nil {
@@ -279,7 +290,7 @@ func TestCancelFromAnotherProcess(t *testing.T) {
 }
 
 func TestSubmitRejects(t *testing.T) {
-	r, repo := setup(t, "edit", "")
+	r, repo := setup(t, "edit", "test -f README.md")
 	run(t, repo, "git", "branch", "taken")
 	tests := []struct {
 		name string
@@ -308,7 +319,7 @@ func TestSubmitRejects(t *testing.T) {
 }
 
 func TestWorktreeDirInsideRepoRejected(t *testing.T) {
-	r, repo := setup(t, "edit", "")
+	r, repo := setup(t, "edit", "test -f README.md")
 	r.Config.Jobs.WorktreeDir = filepath.Join(repo, ".worktrees")
 	_, err := r.Submit(context.Background(), Request{Repo: "demo", Prompt: "x"})
 	if err == nil || !strings.Contains(err.Error(), "inside demo's working copy") {
@@ -317,7 +328,7 @@ func TestWorktreeDirInsideRepoRejected(t *testing.T) {
 }
 
 func TestReconcileDeadRunner(t *testing.T) {
-	r, _ := setup(t, "edit", "")
+	r, _ := setup(t, "edit", "test -f README.md")
 	ctx := context.Background()
 	j := &Job{ID: "dead", Repo: "demo", Status: Running, RunnerPID: 999999999, CreatedAt: time.Now()}
 	if err := r.Store.Save(ctx, j); err != nil {
@@ -333,7 +344,7 @@ func TestReconcileDeadRunner(t *testing.T) {
 }
 
 func TestFollowUpAddsToTheSameBranch(t *testing.T) {
-	r, repo := setup(t, "edit", "")
+	r, repo := setup(t, "edit", "test -f README.md")
 	ctx := context.Background()
 	first := submitAndWait(t, r, Request{Repo: "demo", Prompt: "add hello", Model: "fast"})
 	if first.Status != Done || first.Commits != 1 {
@@ -364,10 +375,10 @@ func TestFollowUpAddsToTheSameBranch(t *testing.T) {
 }
 
 func TestFollowUpRejects(t *testing.T) {
-	r, _ := setup(t, "fail", "")
+	r, _ := setup(t, "fail", "test -f README.md")
 	ctx := context.Background()
 	failed := submitAndWait(t, r, Request{Repo: "demo", Prompt: "break"})
-	if _, err := r.Submit(ctx, Request{Continue: failed.ID, Prompt: "again"}); err == nil || !strings.Contains(err.Error(), "dotshift clean") {
+	if _, err := r.Submit(ctx, Request{Continue: failed.ID, Prompt: "again"}); err == nil || !strings.Contains(err.Error(), "resume_goal") {
 		t.Errorf("err = %v", err)
 	}
 	if _, err := r.Submit(ctx, Request{Continue: "nope", Prompt: "again"}); err == nil || !strings.Contains(err.Error(), "no such job") {
@@ -383,7 +394,7 @@ func TestFollowUpRejects(t *testing.T) {
 	}
 	r.Shutdown(ctx, "shutting down")
 	j, _ := r.Get(ctx, running.ID)
-	if j.Status != Cancelled || j.Error != "shutting down" {
+	if j.Status != Queued || !strings.Contains(j.Error, "will resume") {
 		t.Errorf("after Shutdown = %s (%s)", j.Status, j.Error)
 	}
 }

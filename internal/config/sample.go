@@ -14,7 +14,7 @@ aliases:
 # "default" uses the CLI's default subscription model. To pin a model, use
 # openai/<Codex model name> or anthropic/<Claude Code model name or alias>.
 
-# Allowlist repositories and a test command before starting project goals.
+# Allowlist repositories and a validation command before starting work.
 repos: {}
 #  myproject:
 #    path: ~/src/myproject
@@ -43,7 +43,7 @@ mcp:
   tunnel: tailscale
 `
 
-// Sample is the dotshift.yaml written by `dotshift init`.
+// Sample is the optional API configuration written by `dotshift init -mode api`.
 const Sample = `# dotshift configuration.
 #
 # Coding agents call the router with an alias (e.g. "smart") as the model name.
@@ -92,7 +92,7 @@ aliases:
 repos: {}
 #  myapp:
 #    path: ~/code/myapp
-#    test: go test ./...   # optional; run after the agent, result kept on the job
+#    test: go test ./...   # required; run independently before completion review
 
 # Uncomment to let Dot create or register projects directly in this folder.
 # projects:
@@ -103,6 +103,7 @@ repos: {}
 #     python: python3 -m unittest discover -s tests -v
 
 jobs:
+  mode: api
   model: smart            # alias used when a job doesn't ask for one
   # Project goals can select prefer_openai to use this alias's OpenAI models
   # first, then its Anthropic models, remembering API limits across restarts.

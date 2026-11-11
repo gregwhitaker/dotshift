@@ -33,6 +33,9 @@ func (s Status) Terminal() bool {
 
 // Request is what an intake asks the runner to do.
 type Request struct {
+	// RequestID identifies a submission across connection retries. Reuse it
+	// only for the same request; empty keeps compatibility with older clients.
+	RequestID string
 	// Repo is an allowlisted repo name, or the path of an allowlisted repo.
 	Repo   string
 	Prompt string
@@ -52,7 +55,8 @@ type Request struct {
 	// the earlier job was asked and what it reported. Prompt is the new input.
 	// Repo, Branch and Base are ignored.
 	Continue string
-	// Goal keeps working and testing until the project goal passes review.
+	// Goal is retained for compatibility. All new submissions now use the
+	// same coding, test, fallback, and review loop, regardless of this flag.
 	Goal bool
 	// MaxIterations limits completed coding/test cycles. Zero means unlimited.
 	MaxIterations int
@@ -60,11 +64,13 @@ type Request struct {
 
 // Job is a job's recorded state.
 type Job struct {
-	ID       string
-	Repo     string // allowlisted repo name
-	RepoPath string
-	Prompt   string
-	Model    string
+	ID          string
+	RequestID   string
+	RequestHash string
+	Repo        string // allowlisted repo name
+	RepoPath    string
+	Prompt      string
+	Model       string
 	// ExecutionMode is pinned at creation; empty denotes a legacy API job.
 	ExecutionMode string
 	Branch        string

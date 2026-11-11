@@ -64,8 +64,9 @@ func (c *Config) StrategyModels(alias, strategy string) ([]ModelRoute, error) {
 	return routes, nil
 }
 
-// ReviewerRoutes resolves a review pool and excludes the actual implementer.
-// Auto prefers another provider, then another model from the coding pool.
+// ReviewerRoutes prefers another provider, then another model for auto review.
+// Subscription auto review can also use a fresh session of the coding model
+// when the other candidates are unavailable. Explicit pools stay distinct.
 func (c *Config) ReviewerRoutes(codingAlias, reviewer, implementer string) ([]ModelRoute, error) {
 	alias := reviewer
 	if reviewer == "auto" {
@@ -91,6 +92,17 @@ func (c *Config) ReviewerRoutes(codingAlias, reviewer, implementer string) ([]Mo
 			otherProvider := reviewer == "auto" && route.Provider != provider
 			if (pass == 0) == otherProvider {
 				out = append(out, route)
+			}
+		}
+	}
+	if reviewer == "auto" && c.UsesSubscriptions() {
+		for _, route := range routes {
+			if route.Model == implementer {
+				// Review always launches a fresh read-only CLI process. Keep
+				// the working model last so an exhausted provider cannot
+				// prevent the remaining provider from finishing the goal.
+				out = append(out, route)
+				break
 			}
 		}
 	}

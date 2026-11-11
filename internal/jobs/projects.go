@@ -219,7 +219,14 @@ func bootstrapProject(ctx context.Context, p *Project, description string) error
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return err
 	}
-	if _, err := git(ctx, p.Path, "add", "--", "README.md"); err != nil {
+	files := []string{"README.md"}
+	if p.TestProfile == "python" {
+		if err := os.WriteFile(filepath.Join(p.Path, ".gitignore"), []byte("__pycache__/\n*.py[cod]\n.pytest_cache/\n.venv/\n"), 0o644); err != nil {
+			return err
+		}
+		files = append(files, ".gitignore")
+	}
+	if _, err := git(ctx, p.Path, append([]string{"add", "--"}, files...)...); err != nil {
 		return err
 	}
 	_, err = git(ctx, p.Path, "-c", "core.hooksPath="+os.DevNull, "-c", "commit.gpgSign=false", "-c", "user.name=dotshift", "-c", "user.email=dotshift@localhost", "commit", "--quiet", "-m", "Initialize project")

@@ -5,5 +5,6 @@ dotshift.yaml
 /web/.vite/
 /bin/
 /build/
+/output/
 /macos/.build/
 /macos/.swiftpm/

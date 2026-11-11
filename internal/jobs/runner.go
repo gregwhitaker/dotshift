@@ -3,7 +3,9 @@ package jobs
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -111,6 +113,34 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 	if strings.TrimSpace(req.Prompt) == "" {
 		return nil, errors.New("no instructions given")
 	}
+	// Keep the old intake names, but never give a new task weaker execution
+	// guarantees than a goal. A retry is checked before parent/branch validation.
+	req.Goal = true
+	if len(req.RequestID) > 128 || strings.TrimSpace(req.RequestID) != req.RequestID {
+		return nil, errors.New("request_id must be at most 128 characters without surrounding whitespace")
+	}
+	encoded, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	requestHash := fmt.Sprintf("%x", sha256.Sum256(encoded))
+	if req.RequestID != "" {
+		if existing, err := r.replayedRequest(ctx, req.RequestID, requestHash); existing != nil || err != nil {
+			return existing, err
+		}
+	}
+	if req.Repo == "" && req.Continue == "" {
+		repos, err := r.allowedRepos(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if len(repos) != 1 {
+			return nil, errors.New("say which repo; list_repos shows the choices")
+		}
+		for name := range repos {
+			req.Repo = name
+		}
+	}
 	var parent *Job
 	if req.Continue != "" {
 		p, err := r.Get(ctx, req.Continue)
@@ -120,27 +150,51 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 		if !p.Status.Terminal() {
 			return nil, fmt.Errorf("job %s is still %s; wait for it to finish, or cancel it, before following up", p.ID, p.Status)
 		}
+		if p.Goal != nil && p.Status != Done {
+			return nil, fmt.Errorf("task %s is %s; use resume_goal to continue its saved work", p.ID, p.Status)
+		}
 		if p.Worktree != "" {
 			return nil, fmt.Errorf("job %s left its worktree at %s; remove it with `dotshift clean %s` before following up", p.ID, p.Worktree, p.ID)
 		}
 		parent = p
+		if p.ExecutionMode != "" && p.ExecutionMode != r.Config.ExecutionMode() {
+			return nil, errors.New("restore the original execution mode before following up on this task")
+		}
 		req.Repo, req.Branch, req.Base = p.Repo, p.Branch, p.BaseCommit
 		if req.Model == "" {
 			req.Model = p.Model
+		}
+		if p.Goal != nil {
+			if req.Strategy == "" {
+				req.Strategy = r.goalStrategy(p)
+			}
+			if req.ReviewerModel == "" {
+				req.ReviewerModel = p.Goal.ReviewerModel
+			}
+			if req.MaxIterations == 0 {
+				req.MaxIterations = p.Goal.MaxIterations
+			}
+			if req.EscalateAfter == 0 && p.Goal.Adaptive != nil && req.Strategy == config.StrategyAdaptive {
+				req.EscalateAfter = p.Goal.Adaptive.EscalateAfter
+			}
+			if req.MaxCostUSD == nil && p.Goal.Budget != nil && p.Goal.Budget.LimitUSD > 0 {
+				remaining := p.Goal.Budget.RemainingUSD
+				if remaining <= 0 {
+					return nil, errors.New("the original spending cap is exhausted; start a new goal with an authorized cap")
+				}
+				req.MaxCostUSD = &remaining
+			}
 		}
 	}
 	name, repo, err := r.resolveRepo(ctx, req.Repo)
 	if err != nil {
 		return nil, err
 	}
-	if req.MaxIterations < 0 || (!req.Goal && req.MaxIterations != 0) {
-		return nil, errors.New("max_iterations must be non-negative and is only supported for goals")
+	if req.MaxIterations < 0 {
+		return nil, errors.New("max_iterations must be non-negative")
 	}
-	if req.Goal && strings.TrimSpace(repo.Test) == "" {
-		return nil, fmt.Errorf("repos.%s.test must be configured before starting a goal", name)
-	}
-	if !req.Goal && (req.Strategy != "" || req.ReviewerModel != "" || req.EscalateAfter != 0 || req.MaxCostUSD != nil) {
-		return nil, errors.New("model strategies, reviewers, and spending caps are only supported for project goals")
+	if strings.TrimSpace(repo.Test) == "" {
+		return nil, fmt.Errorf("repos.%s.test must be configured before starting coding work", name)
 	}
 	model := req.Model
 	if model == "" {
@@ -156,6 +210,13 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 	if req.Goal {
 		if strategy == "" {
 			strategy = r.Config.Jobs.Strategy
+			// An explicit model alias can pin a provider even when the
+			// default pool uses a multi-provider strategy.
+			if req.Model != "" && req.Model != r.Config.Jobs.Model {
+				if _, err := r.Config.StrategyModels(model, strategy); err != nil {
+					strategy = config.StrategyAlias
+				}
+			}
 		}
 		if strategy == "" {
 			strategy = config.StrategyAlias
@@ -236,6 +297,7 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 
 	j := &Job{
 		ID: id, Repo: name, RepoPath: top, Prompt: req.Prompt, Model: model,
+		RequestID: req.RequestID, RequestHash: requestHash,
 		ExecutionMode: r.Config.ExecutionMode(),
 		Branch:        branch, BaseCommit: baseCommit, Worktree: filepath.Join(wtDir, id),
 		Status: Queued, LogPath: filepath.Join(logDir, id+".log"),
@@ -265,6 +327,7 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 	if parent != nil {
 		j.Parent = parent.ID
 		prompt = r.followUpPrompt(ctx, parent, req.Prompt)
+		j.Goal.Input = prompt
 		// A follow-up adds to the earlier job's branch. The branch is gone
 		// only when that job made no commits, so it starts again from the base.
 		if branchExists {
@@ -275,13 +338,33 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 		return nil, err
 	}
 	if err := r.Store.Save(ctx, j); err != nil {
-		r.removeWorktree(context.Background(), j, true)
+		r.removeWorktree(context.Background(), j, parent == nil)
+		if req.RequestID != "" {
+			if existing, replayErr := r.replayedRequest(ctx, req.RequestID, requestHash); existing != nil || replayErr != nil {
+				return existing, replayErr
+			}
+		}
 		return nil, err
 	}
 
 	snapshot := cloneJob(j)
 	r.startLocked(j, repo, prompt)
 	return snapshot, nil
+}
+
+func (r *Runner) replayedRequest(ctx context.Context, id, hash string) (*Job, error) {
+	j, err := r.Store.byRequest(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if j.RequestHash != hash {
+		return nil, errors.New("request_id was already used for different instructions; use a new request_id for new work")
+	}
+	r.reconcile(ctx, j)
+	return j, nil
 }
 
 // startLocked starts a worker while mu is held, so shutdown cannot miss it.

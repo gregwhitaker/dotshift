@@ -176,7 +176,7 @@ func TestGoalBlockerAcceptsInput(t *testing.T) {
 
 func TestGoalRestartPreservesPartialWork(t *testing.T) {
 	r, repo := setup(t, "goal_sleep", "test -f hello.txt")
-	j, err := r.Submit(context.Background(), Request{Repo: "demo", Prompt: "Finish the project", Goal: true})
+	j, err := r.Submit(context.Background(), Request{Repo: "demo", Prompt: "Finish the project"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,14 +332,13 @@ func TestGoalCleanupPreventsResume(t *testing.T) {
 	}
 }
 
-func TestGoalsRequireTestsAndPreserveLegacyJobs(t *testing.T) {
+func TestAllNewCodingWorkRequiresTests(t *testing.T) {
 	r, _ := setup(t, "edit", "")
 	if _, err := r.Submit(context.Background(), Request{Repo: "demo", Prompt: "Build it", Goal: true}); err == nil || !strings.Contains(err.Error(), ".test must be configured") {
 		t.Fatalf("missing test command = %v", err)
 	}
-	j := submitAndWait(t, r, Request{Repo: "demo", Prompt: "One task"})
-	if j.Status != Done || j.Goal != nil {
-		t.Fatalf("ordinary task = %+v", j)
+	if _, err := r.Submit(context.Background(), Request{Repo: "demo", Prompt: "One task"}); err == nil || !strings.Contains(err.Error(), ".test must be configured") {
+		t.Fatalf("ordinary task without tests = %v", err)
 	}
 }
 

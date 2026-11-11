@@ -158,7 +158,9 @@ func (r *Runner) selectGoalModel(ctx context.Context, j *Job, review bool, out i
 		}
 		// Wait out a short throttle on the preferred model. Longer throttles
 		// use an available fallback immediately.
-		briefWait := chosen > 0 && !waitUntil.IsZero() && waitUntil.Sub(now) <= 5*time.Second
+		// An available reviewer can proceed immediately, including a fresh
+		// Claude review after OpenAI's subscription allowance is exhausted.
+		briefWait := !review && chosen > 0 && !waitUntil.IsZero() && waitUntil.Sub(now) <= 5*time.Second
 		if chosen >= 0 && !briefWait {
 			route := available[chosen].ModelRoute
 			if a := j.Goal.Adaptive; a != nil && !review {
@@ -181,6 +183,9 @@ func (r *Runner) selectGoalModel(ctx context.Context, j *Job, review bool, out i
 				selection.Reason = "selected the first available model in " + selection.Strategy + " order"
 				if review && j.Goal.ReviewerModel != "" {
 					selection.Reason = "selected a reviewer different from implementer " + j.Goal.ModelSelection.ActiveModel
+					if route.Model == j.Goal.ModelSelection.ActiveModel {
+						selection.Reason = "selected the coding model for a separate read-only review session"
+					}
 				}
 				if len(reasons) > 0 {
 					selection.Reason += "; skipped " + strings.Join(reasons, "; ")

@@ -36,13 +36,12 @@ func startIntake(cfg *config.Config, runner *jobs.Runner, dir string) (func(), e
 	}
 	closeAll := func() { authStore.Close() }
 
-	publicURL, tailscale := cfg.MCP.PublicURL, ""
+	publicURL := cfg.MCP.PublicURL
 	if cfg.MCP.Tunnel == config.TunnelTailscale {
-		bin, url, err := findFunnel(context.Background())
+		_, url, err := findFunnel(context.Background())
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: Tailscale Funnel: %v\n  The MCP intake is only reachable from this machine until that's fixed.\n", err)
+			fmt.Fprintf(os.Stderr, "warning: Tailscale status: %v\n  Tunnel setup will retry automatically.\n", err)
 		} else {
-			tailscale = bin
 			if publicURL == "" {
 				publicURL = url
 			}
@@ -69,15 +68,16 @@ func startIntake(cfg *config.Config, runner *jobs.Runner, dir string) (func(), e
 	}()
 
 	fmt.Printf("MCP intake listening on http://%s (endpoint /mcp)\n", ln.Addr())
-	var funnel *tunnel.Funnel
-	if tailscale != "" {
-		_, port, _ := net.SplitHostPort(cfg.MCP.Listen)
-		if funnel, err = tunnel.StartFunnel(tailscale, port, os.Stdout); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %v\n  The MCP intake is only reachable from this machine. `dotshift connect` has the Funnel setup steps.\n", err)
-		}
-	}
-	if funnel != nil {
-		fmt.Printf("Tailscale Funnel is serving it at %s/mcp\n", publicURL)
+	stopFunnel := func() {}
+	if cfg.MCP.Tunnel == config.TunnelTailscale {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		_, port, _ := net.SplitHostPort(ln.Addr().String())
+		go func() {
+			defer close(done)
+			tunnel.SuperviseFunnel(ctx, port, os.Stdout, logLine, dir)
+		}()
+		stopFunnel = func() { cancel(); <-done }
 	} else if publicURL != "" && cfg.MCP.Tunnel == config.TunnelNone {
 		fmt.Printf("Clients connect to %s/mcp\n", publicURL)
 	}
@@ -86,9 +86,7 @@ func startIntake(cfg *config.Config, runner *jobs.Runner, dir string) (func(), e
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if funnel != nil {
-			funnel.Stop()
-		}
+		stopFunnel()
 		_ = srv.Shutdown(ctx)
 		closeAll()
 	}, nil

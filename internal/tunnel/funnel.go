@@ -63,6 +63,7 @@ type Funnel struct {
 	cmd  *exec.Cmd
 	done chan struct{}
 	out  *lockedBuffer
+	err  error // read only after done is closed
 }
 
 // startupGrace is how long a funnel must stay up to count as started. When
@@ -74,23 +75,52 @@ var startupGrace = 3 * time.Second
 // log. Funnel needs to be turned on for the tailnet once; when it isn't,
 // tailscale prints a link to do that and the error carries it.
 func StartFunnel(bin, port string, log io.Writer) (*Funnel, error) {
+	return startFunnel(context.Background(), bin, port, log)
+}
+
+func startFunnel(ctx context.Context, bin, port string, log io.Writer, stateDirs ...string) (*Funnel, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var stateDir string
+	if len(stateDirs) > 0 {
+		stateDir = stateDirs[0]
+	}
+	if err := recoverFunnel(stateDir); err != nil {
+		return nil, fmt.Errorf("recovering tunnel: %w", err)
+	}
 	f := &Funnel{done: make(chan struct{}), out: &lockedBuffer{}}
 	f.cmd = exec.Command(bin, "funnel", port)
+	prepareFunnelProcess(f.cmd)
+	// The macOS CLI can leave a descendant holding its output pipe open.
+	// Bound output draining after the CLI exits so shutdown can finish.
+	f.cmd.WaitDelay = 2 * time.Second
 	f.cmd.Stdout = io.MultiWriter(f.out, log)
 	f.cmd.Stderr = f.cmd.Stdout
 	if err := f.cmd.Start(); err != nil {
 		return nil, fmt.Errorf("starting tailscale funnel: %w", err)
 	}
-	var waitErr error
+	if err := rememberFunnel(stateDir, f.cmd.Process.Pid); err != nil {
+		killFunnelProcess(f.cmd)
+		_ = f.cmd.Wait()
+		return nil, fmt.Errorf("recording tunnel ownership: %w", err)
+	}
 	go func() {
-		waitErr = f.cmd.Wait()
+		f.err = f.cmd.Wait()
+		// A wrapper can exit without its child. Reap the process group even
+		// on an unexpected exit, before another attempt can claim the port.
+		killFunnelProcess(f.cmd)
+		forgetFunnel(stateDir, f.cmd.Process.Pid)
 		close(f.done)
 	}()
 	select {
+	case <-ctx.Done():
+		f.Stop()
+		return nil, ctx.Err()
 	case <-f.done:
 		msg := strings.TrimSpace(f.out.String())
-		if msg == "" && waitErr != nil {
-			msg = waitErr.Error()
+		if msg == "" && f.err != nil {
+			msg = f.err.Error()
 		}
 		return nil, fmt.Errorf("tailscale funnel %s stopped: %s", port, msg)
 	case <-time.After(startupGrace):
@@ -105,11 +135,11 @@ func (f *Funnel) Stop() {
 		return
 	default:
 	}
-	_ = f.cmd.Process.Signal(os.Interrupt)
+	interruptFunnelProcess(f.cmd)
 	select {
 	case <-f.done:
 	case <-time.After(5 * time.Second):
-		_ = f.cmd.Process.Kill()
+		killFunnelProcess(f.cmd)
 		<-f.done
 	}
 }

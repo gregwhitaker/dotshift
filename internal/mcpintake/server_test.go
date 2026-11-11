@@ -39,7 +39,9 @@ func (a shellAgent) Command(ctx context.Context, t agent.Task) *exec.Cmd {
 	return cmd
 }
 
-const editScript = `cat > /dev/null; echo "line" >> hello.txt; echo "Added a line to hello.txt. Should I also update the README?" > "$SUMMARY"`
+const editScript = `cat > /dev/null
+if [ "$READ_ONLY" = false ]; then echo "line" >> hello.txt; fi
+echo '{"status":"complete","summary":"Added a line to hello.txt. Should I also update the README?","next_steps":""}' > "$SUMMARY"`
 
 func run(t *testing.T, dir string, args ...string) string {
 	t.Helper()
@@ -213,7 +215,7 @@ func TestToolsOverOAuth(t *testing.T) {
 			for _, tool := range tools.Tools {
 				names = append(names, tool.Name)
 			}
-			if got := strings.Join(names, ","); got != "cancel_task,create_project,list_repos,list_strategies,register_project,resume_goal,send_input,start_goal,start_task,task_result,task_status" {
+			if got := strings.Join(names, ","); got != "cancel_task,create_project,list_repos,list_strategies,list_tasks,register_project,resume_goal,send_input,start_goal,start_task,task_result,task_status" {
 				t.Fatalf("tools = %s", got)
 			}
 
@@ -288,6 +290,59 @@ func TestCancelOverMCP(t *testing.T) {
 	}
 	if st := waitFinished(t, cs, id); st["status"] != "cancelled" {
 		t.Fatalf("after cancel_task = %v", st)
+	}
+}
+
+func TestReconnectFindsWorkAndReplaysSubmissions(t *testing.T) {
+	runner := newRunner(t, editScript)
+	srv, _ := newTestServer(t, runner, "")
+	cs := connect(t, srv, "none")
+	args := map[string]any{"request_id": "reconnect-initial", "instructions": "Add a line"}
+	started, msg := call(t, cs, "start_task", args)
+	if msg != "" {
+		t.Fatal(msg)
+	}
+	id := started["task_id"].(string)
+	if result := waitFinished(t, cs, id); result["status"] != "done" || result["goal"] == nil {
+		t.Fatalf("task skipped autonomous loop: %v", result)
+	}
+	cs.Close()
+	cs = connect(t, srv, "none")
+	discovered, msg := call(t, cs, "list_tasks", map[string]any{"repo": "demo"})
+	if msg != "" {
+		t.Fatal(msg)
+	}
+	items := discovered["tasks"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["task_id"] != id || items[0].(map[string]any)["request_id"] != "reconnect-initial" {
+		t.Fatalf("cannot rediscover task: %v", discovered)
+	}
+	replayed, msg := call(t, cs, "start_task", args)
+	if msg != "" || replayed["task_id"] != id {
+		t.Fatalf("retry duplicated work: %v, %s", replayed, msg)
+	}
+	followArgs := map[string]any{"task_id": id, "request_id": "reconnect-followup", "input": "Add another line"}
+	follow, msg := call(t, cs, "send_input", followArgs)
+	if msg != "" {
+		t.Fatal(msg)
+	}
+	nextID := follow["task_id"].(string)
+	result := waitFinished(t, cs, nextID)
+	if result["status"] != "done" || result["goal"] == nil || result["branch"] != started["branch"] {
+		t.Fatalf("follow-up lost workflow: %v", result)
+	}
+	cs.Close()
+	cs = connect(t, srv, "none")
+	replayed, msg = call(t, cs, "send_input", followArgs)
+	if msg != "" || replayed["task_id"] != nextID {
+		t.Fatalf("follow-up retry duplicated work: %v, %s", replayed, msg)
+	}
+	list, err := runner.List(context.Background())
+	if err != nil || len(list) != 2 {
+		t.Fatalf("retry created extra jobs: %d, %v", len(list), err)
+	}
+	args["instructions"] = "Different instructions"
+	if _, msg := call(t, cs, "start_task", args); !strings.Contains(msg, "different instructions") {
+		t.Fatalf("accepted different work under same ID: %s", msg)
 	}
 }
 

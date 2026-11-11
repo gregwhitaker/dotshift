@@ -64,8 +64,8 @@ type MCP struct {
 type Repo struct {
 	// Path is the repository's working copy. A leading ~ is the home folder.
 	Path string `yaml:"path"`
-	// Test is an optional shell command run in the job's worktree after the
-	// agent finishes, e.g. "go test ./...". Its result is recorded on the job.
+	// Test is the validation command run in the job's worktree, e.g.
+	// "go test ./...". It is required before starting coding work.
 	Test string `yaml:"test"`
 }
 
@@ -86,8 +86,9 @@ type Jobs struct {
 	Model string `yaml:"model"`
 	// Strategy is the default model selection policy for project goals.
 	Strategy string `yaml:"strategy"`
-	// ReviewerModel is an alias, or "auto" to choose a different model from
-	// the coding alias. Empty preserves review with the coding model.
+	// ReviewerModel is an alias, or "auto" to prefer a different model from
+	// the coding alias. Subscription auto can fall back to a fresh review
+	// using the coding model. Empty preserves review with the coding model.
 	ReviewerModel string `yaml:"reviewer_model"`
 	// EscalateAfter is the number of stalled cycles before adaptive escalates.
 	EscalateAfter int `yaml:"escalate_after"`

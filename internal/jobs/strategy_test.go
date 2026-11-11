@@ -293,7 +293,7 @@ func TestStrategyValidationBeforeCreatingWorktree(t *testing.T) {
 	for _, request := range []Request{
 		{Repo: "demo", Prompt: "x", Goal: true, Strategy: "imaginary"},
 		{Repo: "demo", Prompt: "x", Goal: true, Model: "fast", Strategy: config.StrategyPreferOpenAI},
-		{Repo: "demo", Prompt: "x", Strategy: config.StrategyPreferOpenAI},
+		{Repo: "demo", Prompt: "x", Strategy: "imaginary"},
 	} {
 		if _, err := r.Submit(context.Background(), request); err == nil {
 			t.Fatalf("accepted %+v", request)

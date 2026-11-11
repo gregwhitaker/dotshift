@@ -2,6 +2,8 @@ package jobs
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +25,7 @@ esac
 test -z "${OPENAI_API_KEY-}"
 test -z "${ANTHROPIC_API_KEY-}"
 test -z "${DOTSHIFT_API_KEY-}"
-cat > /dev/null
+task_prompt=$(cat)
 `
 
 const subscriptionCodexSuccess = `
@@ -93,15 +95,15 @@ func TestSubscriptionGoalCodingTestsAndIndependentReview(t *testing.T) {
 	}
 }
 
-func TestSubscriptionLimitFallbackPersistsAndResumes(t *testing.T) {
+func TestSubscriptionExplicitReviewerWaitsAndResumes(t *testing.T) {
 	r, repo := subscriptionRunner(t, `
 printf 'preserved\n' > partial.txt
 echo '{"type":"turn.failed","error":{"message":"You have hit your limit","type":"usage_limit_reached"}}'
 exit 1
 `, "test -f partial.txt\n"+subscriptionClaudeSuccess)
-	j := submitAndWait(t, r, Request{Repo: "demo", Prompt: "Complete the project", Goal: true, MaxIterations: 3})
-	// Claude can finish the implementation, but the independent reviewer is
-	// still limited. Never silently let the implementer approve its own work.
+	r.Config.Aliases["review"] = []string{"openai/default", "anthropic/default"}
+	j := submitAndWait(t, r, Request{Repo: "demo", Prompt: "Complete the project", Goal: true, ReviewerModel: "review", MaxIterations: 3})
+	// An explicitly chosen reviewer pool retains its different-model rule.
 	if j.Status != Blocked || j.TestResult != "passed" || j.Goal.Iterations != 1 || j.Goal.ModelSelection.ActiveModel != "anthropic/default" {
 		t.Fatalf("goal=%+v, progress=%+v", j, j.Goal)
 	}
@@ -122,6 +124,149 @@ exit 1
 	j = waitGoal(t, next, resumed.ID)
 	if j.Status != Done || j.Goal.Iterations != 2 || j.ExecutionMode != config.ModeSubscription {
 		t.Fatalf("resumed=%+v", j)
+	}
+}
+
+func TestSubscriptionLimitFallbackCompletesWithFreshClaudeReview(t *testing.T) {
+	for _, knownReset := range []bool{false, true} {
+		t.Run(fmt.Sprintf("known_reset=%t", knownReset), func(t *testing.T) {
+			calls := filepath.Join(t.TempDir(), "calls")
+			t.Setenv("DOTSHIFT_TEST_CALLS", calls)
+			reset := int64(0)
+			if knownReset {
+				reset = time.Now().Add(time.Hour).Unix()
+			}
+			codex := fmt.Sprintf(`
+echo "openai $$" >> "$DOTSHIFT_TEST_CALLS"
+printf 'preserved\n' > partial.txt
+echo '{"type":"turn.failed","error":{"type":"usage_limit_reached","resets_at":%d}}'
+exit 1
+`, reset)
+			claude := `
+test "$(cat partial.txt)" = preserved
+case "$*" in
+  *--resume*|*--continue*) exit 10;;
+esac
+case "$*" in
+  *--no-session-persistence*) ;;
+  *) exit 11;;
+esac
+case "$*" in
+  *,Bash*) echo "claude-code $$" >> "$DOTSHIFT_TEST_CALLS";;
+  *)
+    echo "claude-review $$" >> "$DOTSHIFT_TEST_CALLS"
+    case "$*" in
+      *'--tools Read,Glob,Grep --allowedTools Read,Glob,Grep'*) ;;
+      *) exit 12;;
+    esac
+    case "$task_prompt" in
+      *'Independently review'*) ;;
+      *) exit 13;;
+    esac
+    case "$task_prompt" in
+      *'dotshift commits them'*) exit 14;;
+    esac
+    ;;
+esac
+` + subscriptionClaudeSuccess
+			r, repo := subscriptionRunner(t, codex, claude)
+			j := submitAndWait(t, r, Request{Repo: "demo", Prompt: "Complete the project", Goal: true, MaxIterations: 3})
+			if j.Status != Done || j.TestResult != "passed" || j.Goal.Iterations != 1 ||
+				j.Goal.ModelSelection.ActiveModel != "anthropic/default" || j.Goal.ReviewerSelection.ActiveModel != "anthropic/default" {
+				t.Fatalf("goal=%+v, progress=%+v", j, j.Goal)
+			}
+			if got := run(t, repo, "git", "show", j.Branch+":partial.txt"); got != "preserved" {
+				t.Fatalf("lost OpenAI's partial work: %q", got)
+			}
+			data, err := os.ReadFile(calls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fields := strings.Fields(string(data))
+			if len(fields) != 6 || fields[0] != "openai" || fields[2] != "claude-code" || fields[4] != "claude-review" || fields[3] == fields[5] {
+				t.Fatalf("expected OpenAI, Claude coding, and a separate Claude review process: %s", data)
+			}
+			next := reopenGoalRunner(t, r, "unused")
+			availability, err := next.modelAvailability(context.Background(), config.ModelRoute{Model: "openai/default", Provider: "openai"}, time.Now())
+			if err != nil || availability.Available || availability.Reason != modelpolicy.SubscriptionLimit || (availability.RetryAt != nil) != knownReset {
+				t.Fatalf("OpenAI limit was not preserved: %+v, %v", availability, err)
+			}
+		})
+	}
+}
+
+func TestSubscriptionAutoReviewDoesNotWaitForOpenAI(t *testing.T) {
+	r, _ := subscriptionRunner(t, subscriptionCodexSuccess, subscriptionClaudeSuccess)
+	reset := time.Now().Add(4 * time.Second)
+	j := &Job{ID: "review-with-claude", Model: "smart", Status: Running, RunToken: "owner", CreatedAt: time.Now(), Goal: &GoalProgress{
+		Phase: goalReviewing, ReviewerModel: "auto",
+		ModelSelection:    &ModelSelection{Strategy: config.StrategyPreferOpenAI, ActiveModel: "anthropic/default"},
+		ReviewerSelection: &ModelSelection{Strategy: config.StrategyAlias, ActiveModel: "openai/default", WaitingUntil: &reset},
+	}}
+	if err := r.Store.Save(context.Background(), j); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.recordModelFailure(context.Background(), config.ModelRoute{Model: "openai/default", Provider: "openai"}, &modelpolicy.Failure{
+		Kind: modelpolicy.SubscriptionLimit, ProviderWide: true, RetryAt: reset,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	route, err := r.selectGoalModel(ctx, j, true, io.Discard)
+	if err != nil || route.Model != "anthropic/default" {
+		t.Fatalf("review waited for OpenAI despite available Claude: %+v, %v", route, err)
+	}
+	if j.Goal.ReviewerSelection.WaitingUntil != nil || j.Goal.ReviewerSelection.Switches != 1 {
+		t.Fatalf("previous review wait was not cleared: %+v", j.Goal.ReviewerSelection)
+	}
+}
+
+func TestSubscriptionFallbackReviewCanRequestFixes(t *testing.T) {
+	r, repo := subscriptionRunner(t, `
+echo '{"type":"turn.failed","error":{"type":"usage_limit_reached"}}'
+exit 1
+`, `
+case "$*" in
+  *,Bash*)
+    if [ -f hello.txt ]; then
+      case "$task_prompt" in
+        *'Add the missing review fix'*) ;;
+        *) exit 15;;
+      esac
+      echo addressed > review-fix.txt
+    fi
+    ;;
+  *)
+    if [ ! -f review-fix.txt ]; then
+      echo '{"type":"result","subtype":"success","is_error":false,"structured_output":{"status":"continue","summary":"An acceptance criterion is missing","next_steps":"Add the missing review fix"}}'
+      exit 0
+    fi
+    ;;
+esac
+`+subscriptionClaudeSuccess)
+	j := submitAndWait(t, r, Request{Repo: "demo", Prompt: "Complete the project", MaxIterations: 3})
+	if j.Status != Done || j.TestResult != "passed" || j.Goal.Iterations != 2 || j.Goal.ReviewerSelection.ActiveModel != "anthropic/default" {
+		t.Fatalf("review feedback was not fixed and revalidated: %+v, %+v", j, j.Goal)
+	}
+	if got := run(t, repo, "git", "show", j.Branch+":review-fix.txt"); got != "addressed" {
+		t.Fatalf("missing review fix: %q", got)
+	}
+}
+
+func TestSubscriptionFallbackStillRequiresAvailableReviewer(t *testing.T) {
+	r, _ := subscriptionRunner(t, `
+echo '{"type":"turn.failed","error":{"type":"usage_limit_reached"}}'
+exit 1
+`, `
+case "$*" in
+  *,Bash*) ;;
+  *) echo '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}'; exit 1;;
+esac
+`+subscriptionClaudeSuccess)
+	j := submitAndWait(t, r, Request{Repo: "demo", Prompt: "Complete the project", Goal: true, MaxIterations: 3})
+	if j.Status != Blocked || j.TestResult != "passed" || j.Goal.Phase != goalReviewing || !strings.Contains(j.Error, "all strategy models need restored access") {
+		t.Fatalf("goal must not finish when both providers cannot review: %+v, %+v", j, j.Goal)
 	}
 }
 

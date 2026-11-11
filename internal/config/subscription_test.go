@@ -24,7 +24,26 @@ func TestSubscriptionConfiguration(t *testing.T) {
 		}
 	}
 	cfg.Aliases["smart"] = []string{"openai/default", "openai/gpt-test"}
-	if err := cfg.ValidateReviewer("smart", StrategyAlias, "auto"); err == nil {
-		t.Fatal("default model identity cannot establish an independent same-provider reviewer")
+	if err := cfg.ValidateReviewer("smart", StrategyAlias, "auto"); err != nil {
+		t.Fatalf("subscription auto must allow a fresh review with the working model: %v", err)
+	}
+	if err := cfg.ValidateReviewer("smart", StrategyAlias, "smart"); err == nil {
+		t.Fatal("an explicit reviewer alias must still require a distinct model")
+	}
+}
+
+func TestSubscriptionAutoReviewerPrefersAlternativesThenFreshSession(t *testing.T) {
+	cfg, err := Parse([]byte(SubscriptionSample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, implementer := range []string{"openai/default", "anthropic/default"} {
+		routes, err := cfg.ReviewerRoutes("smart", "auto", implementer)
+		if err != nil || len(routes) != 2 || routes[0].Model == implementer || routes[1].Model != implementer {
+			t.Fatalf("review pool for %s: %+v, %v", implementer, routes, err)
+		}
+	}
+	if err := cfg.ValidateReviewer("claude", StrategyAlias, "auto"); err != nil {
+		t.Fatalf("Claude-only goals must allow a separate Claude review: %v", err)
 	}
 }

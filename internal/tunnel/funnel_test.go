@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +52,7 @@ func TestStartFunnel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitFunnelOutput(t, f, "proxy http://127.0.0.1:8787")
 	f.Stop()
 	select {
 	case <-f.Done():
@@ -68,5 +70,47 @@ func TestStartFunnelNotEnabled(t *testing.T) {
 	_, err := StartFunnel(bin, "8787", &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "https://login.tailscale.com/f/funnel") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestStopFunnelWithInheritedOutputPipe(t *testing.T) {
+	previousGrace := startupGrace
+	startupGrace = 50 * time.Millisecond
+	defer func() { startupGrace = previousGrace }()
+	// The child outlives the CLI and inherits its stdout/stderr. Wait must
+	// still return after the CLI exits instead of waiting for the child.
+	bin := fakeTailscale(t, "{}", `sh -c 'trap "" INT; exec sleep 10' & child=$!; trap 'exit 0' INT; echo "child=$child"; while :; do sleep 0.05; done`)
+	f, err := StartFunnel(bin, "8787", &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFunnelOutput(t, f, "child=")
+	pid, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(f.out.String(), "child=")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if child, err := os.FindProcess(pid); err == nil {
+			_ = child.Kill()
+		}
+	}()
+	stopped := make(chan struct{})
+	go func() { f.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(4 * time.Second):
+		t.Fatal("shutdown waited for a descendant's inherited output pipe")
+	}
+}
+
+func waitFunnelOutput(t *testing.T, f *Funnel, want string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for !strings.Contains(f.out.String(), want) {
+		if time.Now().After(deadline) {
+			f.Stop()
+			t.Fatalf("funnel output missing %q: %s", want, f.out.String())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

@@ -60,6 +60,7 @@ type projectOut struct {
 }
 
 type startTaskIn struct {
+	RequestID    string `json:"request_id,omitempty" jsonschema:"unique identifier for this requested change; reuse the same value and arguments if the connection drops, to recover the original task without starting duplicate work"`
 	Repo         string `json:"repo,omitempty" jsonschema:"name of the repo from list_repos; may be left out when only one repo is allowed"`
 	Instructions string `json:"instructions" jsonschema:"what the coding agent should do, in plain language, with enough detail to work without asking"`
 	Model        string `json:"model,omitempty" jsonschema:"optional model alias from list_repos, e.g. fast or smart"`
@@ -77,16 +78,18 @@ type taskResultIn struct {
 }
 
 type sendInputIn struct {
-	TaskID string `json:"task_id" jsonschema:"the finished task to follow up on"`
-	Input  string `json:"input" jsonschema:"the answer to the agent's question, or further instructions"`
+	RequestID string `json:"request_id,omitempty" jsonschema:"unique identifier for this follow-up; reuse the same value and arguments when retrying a dropped connection"`
+	TaskID    string `json:"task_id" jsonschema:"the finished task to follow up on"`
+	Input     string `json:"input" jsonschema:"the answer to the agent's question, or further instructions"`
 }
 
 type startGoalIn struct {
+	RequestID     string   `json:"request_id,omitempty" jsonschema:"unique identifier for this requested change; reuse the same value and arguments if the connection drops, to recover the original task without starting duplicate work"`
 	Repo          string   `json:"repo,omitempty" jsonschema:"allowlisted repo name; optional when only one repo is configured"`
 	Goal          string   `json:"goal" jsonschema:"the complete project objective and acceptance criteria to pursue autonomously"`
 	Model         string   `json:"model,omitempty" jsonschema:"model alias from list_repos"`
 	Strategy      string   `json:"strategy,omitempty" jsonschema:"model strategy from list_strategies; defaults to jobs.strategy"`
-	ReviewerModel string   `json:"reviewer_model,omitempty" jsonschema:"reviewer alias or auto to prefer a different provider in the coding alias; always excludes the implementation model; defaults to jobs.reviewer_model"`
+	ReviewerModel string   `json:"reviewer_model,omitempty" jsonschema:"reviewer alias or auto to prefer a different provider; subscription auto can use the coding model in a fresh read-only session if other reviewers are unavailable; defaults to jobs.reviewer_model"`
 	EscalateAfter int      `json:"escalate_after,omitempty" jsonschema:"adaptive strategy only: repeated failed tests, unchanged cycles, agent failures, or rejected reviews before advancing to the next configured model; default jobs.escalate_after"`
 	MaxCostUSD    *float64 `json:"max_cost_usd,omitempty" jsonschema:"API mode only: project spending cap in USD including retries and review; stop once reported costs reach it, so the final request can exceed it; 0 disables; defaults to jobs.max_cost_usd"`
 	Branch        string   `json:"branch,omitempty" jsonschema:"optional new branch name"`
@@ -108,8 +111,9 @@ type resumeGoalIn struct {
 
 // taskOut is a job as MCP clients see it. Fields that don't apply are left out.
 type taskOut struct {
-	TaskID string `json:"task_id"`
-	Status string `json:"status"`
+	TaskID    string `json:"task_id"`
+	RequestID string `json:"request_id,omitempty"`
+	Status    string `json:"status"`
 	// Finished is true once the status will not change again.
 	Finished bool `json:"finished"`
 	// WaitingForInput is true when the agent stopped to ask something
@@ -161,20 +165,66 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 			"use create_project to start a new project, or register_project for an existing committed repository directly inside projects.root. " +
 			"Choose a test_profile from the catalog. Creation seeds a README and initial commit; it does not build the application. " +
 			"Then call start_goal with the returned project name, the user's objective, and concrete acceptance criteria, including real tests. " +
-			"Use start_goal for a project objective that " +
-			"should keep working, testing, and fixing issues autonomously; its repo must have tests configured. " +
-			"Goals persist and resume when the service restarts. Use start_task for a single coding task. " +
+			"start_task, start_goal, and send_input all use the same autonomous coding, tests, model fallback, and separate read-only review loop; the repo must have tests configured. " +
+			"Work persists and resumes when the service restarts. Supply a unique request_id for each new change and reuse it unchanged when retrying a submission after a connection failure. " +
+			"Use list_tasks to recover task IDs after reconnecting instead of submitting the work again. " +
 			"Call list_strategies to select a goal's model policy and see observed model availability. " +
 			"The strategy catalog reports execution_mode: api or subscription. In subscription mode the official CLIs use the user's saved sign-ins; there is no API fallback. " +
 			"Use prefer_openai to switch from OpenAI to Anthropic on observed limits. Subscription mode waits for a known reset, or blocks for retry_unavailable if no reset time is reported. " +
-			"Use adaptive for an ordered ladder that escalates on repeated failures or stalled progress, and reviewer_model=auto for a distinct completion reviewer. " +
+			"Use adaptive for an ordered ladder that escalates on repeated failures or stalled progress, and reviewer_model=auto for a fresh read-only completion review. " +
+			"In subscription mode, auto review can use Claude in a separate session after Claude takes over from limited OpenAI models; it does not wait for OpenAI to reset. " +
 			"Only API mode supports max_cost_usd to bound reported spending; the last request may exceed it. Subscription mode uses max_iterations and the configured timeout, not USD caps. " +
 			"Never raise or remove a spending cap to bypass a blocker without the user's authorization. " +
 			"Only set retry_unavailable after access has actually been restored. " +
 			"Poll task_status until finished is true (tasks take minutes), then task_result. If the agent's notes ask a question, " +
-			"answer it with send_input for a task, or resume_goal for a blocked goal. Both continue on the same branch.",
+			"answer a blocked task with resume_goal; use send_input for new instructions after completed work. Both continue on the same branch.",
 	})
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)}
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "list_tasks", Title: "Find recent work",
+		Description: "Recover task IDs and progress after reconnecting. Lists recent work, optionally filtered by repo or unfinished tasks. Check this before resubmitting work whose response was lost.",
+		Annotations: readOnly,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
+		Repo           string `json:"repo,omitempty" jsonschema:"optional repo name"`
+		UnfinishedOnly bool   `json:"unfinished_only,omitempty" jsonschema:"exclude completed and cancelled work; includes blocked tasks"`
+		Limit          int    `json:"limit,omitempty" jsonschema:"number of recent tasks, default 20, maximum 100"`
+	}) (*mcp.CallToolResult, struct {
+		Tasks []taskOut `json:"tasks"`
+	}, error) {
+		out := struct {
+			Tasks []taskOut `json:"tasks"`
+		}{Tasks: []taskOut{}}
+		if in.Limit < 0 || in.Limit > 100 {
+			return nil, out, errors.New("limit must be between 1 and 100, or 0 for the default")
+		}
+		if in.Limit == 0 {
+			in.Limit = 20
+		}
+		list, err := svc.List(ctx)
+		if err != nil {
+			return nil, out, err
+		}
+		for _, j := range list {
+			if in.Repo != "" && j.Repo != in.Repo {
+				continue
+			}
+			if in.UnfinishedOnly && (j.Status == jobs.Done || j.Status == jobs.Cancelled) {
+				continue
+			}
+			item := describe(j)
+			// Discovery stays compact; task_status/result provides full details.
+			item.Notes, item.Goal = "", nil
+			if len(item.Instructions) > 500 {
+				item.Instructions = item.Instructions[:500] + "…"
+			}
+			out.Tasks = append(out.Tasks, item)
+			if len(out.Tasks) == in.Limit {
+				break
+			}
+		}
+		return nil, out, nil
+	})
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "list_strategies", Title: "List model strategies",
@@ -237,18 +287,9 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 			"Returns a task_id for task_status, task_result, and cancel_task.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in startGoalIn) (*mcp.CallToolResult, taskOut, error) {
-		repo := in.Repo
-		if repo == "" {
-			repos, err := svc.Repos(ctx)
-			if err != nil {
-				return nil, taskOut{}, err
-			}
-			if len(repos) == 1 {
-				repo = repos[0].Name
-			}
-		}
 		j, err := svc.Submit(ctx, jobs.Request{
-			Repo: repo, Prompt: in.Goal, Model: in.Model, Branch: in.Branch, Base: in.Base,
+			RequestID: in.RequestID,
+			Repo:      in.Repo, Prompt: in.Goal, Model: in.Model, Branch: in.Branch, Base: in.Base,
 			Goal: true, MaxIterations: in.MaxIterations,
 			Strategy: in.Strategy, ReviewerModel: in.ReviewerModel, EscalateAfter: in.EscalateAfter, MaxCostUSD: in.MaxCostUSD,
 		})
@@ -283,26 +324,12 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
-		Name:  "start_task",
-		Title: "Start a coding task",
-		Description: "Start a coding task in one of the user's repos. A coding agent works on a new git branch " +
-			"on the user's machine and commits the result there; nothing is pushed. Returns at once with a " +
-			"task_id; follow it with task_status.",
+		Name:        "start_task",
+		Title:       "Start a coding task",
+		Description: "Start coding on a new local branch using the configured model selection, automatic fallback, tests, and a separate read-only review. Repeats fixes until reviewed completion or a blocker. Requires configured tests. Returns a task_id immediately; nothing is pushed. Supply request_id and reuse it unchanged on a connection retry.",
 		Annotations: &mcp.ToolAnnotations{Title: "Start a coding task", DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in startTaskIn) (*mcp.CallToolResult, taskOut, error) {
-		repo := in.Repo
-		if repo == "" {
-			repos, err := svc.Repos(ctx)
-			if err != nil {
-				return nil, taskOut{}, err
-			}
-			if len(repos) == 1 {
-				repo = repos[0].Name
-			} else {
-				return nil, taskOut{}, errors.New("say which repo; list_repos shows the choices")
-			}
-		}
-		j, err := svc.Submit(ctx, jobs.Request{Repo: repo, Prompt: in.Instructions, Model: in.Model, Branch: in.Branch, Base: in.Base})
+		j, err := svc.Submit(ctx, jobs.Request{RequestID: in.RequestID, Repo: in.Repo, Prompt: in.Instructions, Model: in.Model, Branch: in.Branch, Base: in.Base})
 		if err != nil {
 			logf("start_task refused: %v", err)
 			return nil, taskOut{}, err
@@ -379,11 +406,11 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 		Name:  "send_input",
 		Title: "Follow up on a task",
 		Description: "Answer a question the agent asked in its notes, or give further instructions, once a task has " +
-			"finished. This starts a follow-up task on the same branch that knows what was asked and done before. " +
-			"Returns the new task_id.",
+			"completed. This starts a follow-up on the same branch with previous context and model policy, including fallback, tests, and a separate review. " +
+			"Use resume_goal for blocked work. Returns a new task_id; reuse request_id and unchanged arguments on a connection retry.",
 		Annotations: &mcp.ToolAnnotations{Title: "Follow up on a task", DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sendInputIn) (*mcp.CallToolResult, taskOut, error) {
-		j, err := svc.Submit(ctx, jobs.Request{Continue: in.TaskID, Prompt: in.Input})
+		j, err := svc.Submit(ctx, jobs.Request{RequestID: in.RequestID, Continue: in.TaskID, Prompt: in.Input})
 		if err != nil {
 			logf("send_input refused: %v", err)
 			return nil, taskOut{}, err
@@ -412,7 +439,8 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 
 func describe(j *jobs.Job) taskOut {
 	out := taskOut{
-		TaskID: j.ID, Status: string(j.Status), Finished: j.Status.Terminal(),
+		RequestID: j.RequestID,
+		TaskID:    j.ID, Status: string(j.Status), Finished: j.Status.Terminal(),
 		WaitingForInput: j.Status == jobs.WaitingInput || j.Status == jobs.Blocked,
 		Repo:            j.Repo, Branch: j.Branch, Model: j.Model, Instructions: j.Prompt, FollowsUp: j.Parent,
 		CreatedAt: stamp(j.CreatedAt), StartedAt: stamp(j.StartedAt), FinishedAt: stamp(j.FinishedAt),

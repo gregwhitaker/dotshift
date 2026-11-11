@@ -47,7 +47,9 @@ CREATE TABLE IF NOT EXISTS jobs (
 	parent      TEXT NOT NULL DEFAULT '',
 	goal        TEXT NOT NULL DEFAULT '',
 	run_token   TEXT NOT NULL DEFAULT '',
-	execution_mode TEXT NOT NULL DEFAULT ''
+	execution_mode TEXT NOT NULL DEFAULT '',
+	request_id TEXT NOT NULL DEFAULT '',
+	request_hash TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS jobs_created ON jobs (created_at);
 CREATE TABLE IF NOT EXISTS model_availability (
@@ -92,11 +94,15 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("open job database %s: %w", path, err)
 	}
-	for _, column := range []string{"parent", "goal", "run_token", "execution_mode"} {
+	for _, column := range []string{"parent", "goal", "run_token", "execution_mode", "request_id", "request_hash"} {
 		if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN ` + column + ` TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()
 			return nil, fmt.Errorf("upgrade job database %s: %w", path, err)
 		}
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS jobs_request_id ON jobs(request_id) WHERE request_id != ''`); err != nil {
+		db.Close()
+		return nil, err
 	}
 	return &Store{db: db}, nil
 }
@@ -106,7 +112,18 @@ func (s *Store) Close() error { return s.db.Close() }
 
 const columns = `id, repo, repo_path, prompt, model, branch, base_commit, worktree, status,
 	error, summary, commits, diffstat, test_result, test_output, exit_code, log_path,
-	runner_pid, agent_pid, created_at, started_at, finished_at, parent, goal, run_token, execution_mode`
+	runner_pid, agent_pid, created_at, started_at, finished_at, parent, goal, run_token, execution_mode, request_id, request_hash`
+
+var saveJobSQL = func() string {
+	var updates []string
+	fields := strings.Split(columns, ",")
+	for _, field := range fields[1:] {
+		field = strings.TrimSpace(field)
+		updates = append(updates, field+" = excluded."+field)
+	}
+	return `INSERT INTO jobs (` + columns + `) VALUES (` + strings.TrimSuffix(strings.Repeat("?,", len(fields)), ",") +
+		`) ON CONFLICT(id) DO UPDATE SET ` + strings.Join(updates, ",")
+}()
 
 // Save inserts or replaces a job.
 func (s *Store) Save(ctx context.Context, j *Job) error {
@@ -119,11 +136,10 @@ func (s *Store) Save(ctx context.Context, j *Job) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT OR REPLACE INTO jobs (`+columns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = tx.ExecContext(ctx, saveJobSQL,
 		j.ID, j.Repo, j.RepoPath, j.Prompt, j.Model, j.Branch, j.BaseCommit, j.Worktree, string(j.Status),
 		j.Error, j.Summary, j.Commits, j.DiffStat, j.TestResult, j.TestOutput, j.ExitCode, j.LogPath,
-		j.RunnerPID, j.AgentPID, unix(j.CreatedAt), unix(j.StartedAt), unix(j.FinishedAt), j.Parent, goal, j.RunToken, j.ExecutionMode)
+		j.RunnerPID, j.AgentPID, unix(j.CreatedAt), unix(j.StartedAt), unix(j.FinishedAt), j.Parent, goal, j.RunToken, j.ExecutionMode, j.RequestID, j.RequestHash)
 	if err != nil {
 		return err
 	}
@@ -150,6 +166,18 @@ func (s *Store) Get(ctx context.Context, id string) (*Job, error) {
 		err = s.refreshBudget(ctx, j)
 	}
 	return j, err
+}
+
+func (s *Store) byRequest(ctx context.Context, id string) (*Job, error) {
+	var jobID string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE request_id = ?`, id).Scan(&jobID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, jobID)
 }
 
 // List returns all jobs, newest first.
@@ -207,7 +235,7 @@ func scan(r scanner) (*Job, error) {
 	var created, started, finished int64
 	err := r.Scan(&j.ID, &j.Repo, &j.RepoPath, &j.Prompt, &j.Model, &j.Branch, &j.BaseCommit, &j.Worktree, &status,
 		&j.Error, &j.Summary, &j.Commits, &j.DiffStat, &j.TestResult, &j.TestOutput, &j.ExitCode, &j.LogPath,
-		&j.RunnerPID, &j.AgentPID, &created, &started, &finished, &j.Parent, &goal, &j.RunToken, &j.ExecutionMode)
+		&j.RunnerPID, &j.AgentPID, &created, &started, &finished, &j.Parent, &goal, &j.RunToken, &j.ExecutionMode, &j.RequestID, &j.RequestHash)
 	if err != nil {
 		return nil, err
 	}
