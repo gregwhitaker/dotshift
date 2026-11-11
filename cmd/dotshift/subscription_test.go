@@ -61,7 +61,7 @@ func TestSubscriptionServeWithoutDocker(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // neither Docker nor model CLIs installed
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := runServe(ctx, path); err != nil {
+	if err := runServe(ctx, path, false); err != nil {
 		t.Fatal(err)
 	}
 }

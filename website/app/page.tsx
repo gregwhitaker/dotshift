@@ -10,18 +10,16 @@ function Github({ size = 20 }: { size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .8a11.4 11.4 0 0 0-3.6 22.2c.6.1.8-.3.8-.6v-2.2c-3.2.7-3.9-1.3-3.9-1.3-.5-1.3-1.3-1.6-1.3-1.6-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.7 2.6 1.2 3.3.9.1-.7.4-1.2.7-1.5-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.1 1.2a10.8 10.8 0 0 1 5.7 0c2.2-1.5 3.1-1.2 3.1-1.2.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.1v3.1c0 .3.2.7.8.6A11.4 11.4 0 0 0 12 .8Z"/></svg>;
 }
 
-function Dotmark({ className = "" }: { className?: string }) {
-  return <svg className={`dotmark ${className}`} viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><circle cx="7" cy="25" r="4.5"/><circle cx="7" cy="13" r="4.5"/><circle cx="19" cy="13" r="4.5"/><circle cx="19" cy="25" r="4.5"/><circle cx="25" cy="5" r="3"/></svg>;
+function Dotmark({ className = "", tone = "light" }: { className?: string; tone?: "light" | "dark" | "mono-white" }) {
+  return <img className={`dotmark ${className}`} src={`/brand/dotshift-mark-${tone}.svg`} width="64" height="64" alt="" aria-hidden="true"/>;
+}
+
+function BrandLogo() {
+  return <img className="brand-logo" src="/brand/dotshift-logo-light.svg" width="167" height="32" alt="dotshift"/>;
 }
 
 function DotField() {
-  return <svg className="dot-field" viewBox="0 0 540 570" aria-hidden="true">
-    {Array.from({ length: 25 }, (_, row) => Array.from({ length: 25 }, (_, col) => {
-      const x = 14 + col * 22, y = 12 + row * 22;
-      const distance = Math.hypot(x - 320, y - 300);
-      return <circle key={`${row}-${col}`} cx={x} cy={y} r={Math.max(0.7, 5 - distance / 100)} fill="currentColor" opacity={distance < 230 ? 0.72 : 0.15}/>;
-    }))}
-  </svg>;
+  return <div className="dot-field" aria-hidden="true"/>;
 }
 
 const demoSteps = ["Set a goal", "Run the loop", "Review the work"];
@@ -38,7 +36,7 @@ function WorkflowDemo() {
     <DotField/>
     <div className="runner-window">
       <div className="runner-bar"><span className="window-dots"><i/><i/><i/></span><span>dotshift / local runner</span><Terminal size={14}/></div>
-      <div className="runner-heading"><Dotmark/><div><strong>One goal. A whole lot of progress.</strong><span>workspace / search</span></div><span className="runner-light"/></div>
+      <div className="runner-heading"><Dotmark tone="dark"/><div><strong>One goal. A whole lot of progress.</strong><span>workspace / search</span></div><span className="runner-light"/></div>
       <div id="demo-panel" role="tabpanel" aria-labelledby={`demo-tab-${step}`} className="runner-content" tabIndex={0}>
         {step === 0 && <div className="demo-view" key="goal">
           <div className="console-label">THE HANDOFF</div>
@@ -168,7 +166,7 @@ export default function Home() {
     <a className="skip-link" href="#main">Skip to content</a>
     <header className="site-header">
       <div className="header-inner">
-        <a href="#" className="wordmark" aria-label="dotshift home" onClick={closeMenu}><Dotmark/>dotshift<span className="wordmark-period">.</span></a>
+        <a href="#" className="wordmark" aria-label="dotshift home" onClick={closeMenu}><BrandLogo/></a>
         <nav className="desktop-nav" aria-label="Main navigation"><a href="#how-it-works">How it works</a><a href="#why-dotshift">Why dotshift</a><a href="#faq">FAQs</a></nav>
         <div className="header-actions"><a className="github-link" href={REPO} target="_blank" rel="noreferrer" aria-label="dotshift on GitHub"><Github size={19}/><span>GitHub</span><ArrowUpRight size={13}/></a><a className="button button-small button-dark" href="#get-started">Get started <ArrowUpRight size={15}/></a><button className="menu-toggle" aria-label={menuOpen ? "Close menu" : "Open menu"} aria-expanded={menuOpen} aria-controls="mobile-nav" onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? <X/> : <Menu/>}</button></div>
       </div>
@@ -179,7 +177,7 @@ export default function Home() {
         <div className="hero-copy">
           <div className="eyebrow hero-eyebrow"><span className="status-dot"/> AUTONOMOUS CODING. LOCALLY RUN.</div>
           <h1>Big ideas.<br/>Meet follow-<br/><span className="hero-highlight">through.<svg viewBox="0 0 400 18" preserveAspectRatio="none" aria-hidden="true"><path d="M4 12 Q160 0 395 7"/></svg></span></h1>
-          <p className="hero-description">Give your coding agents a goal, not another prompt. dotshift builds, tests, and keeps fixing—then hands you a branch to review.</p>
+          <p className="hero-description">Give your coding agents a goal. dotshift builds, tests, and keeps fixing—then hands you a branch to review.</p>
           <div className="hero-actions"><a className="button button-accent" href="#get-started">Put it to work <ArrowUpRight size={19}/></a><a className="button button-quiet" href="#how-it-works"><span className="play-circle"><Play size={11} fill="currentColor"/></span>See how it works</a></div>
           <div className="hero-footnote"><span/><p>Your machine. Your models. Your branch.</p></div>
         </div>
@@ -191,7 +189,7 @@ export default function Home() {
         <div className="section-top"><div><div className="eyebrow"><span className="section-number">01</span> THE FOLLOW-THROUGH IS THE FEATURE</div><h2>A goal goes in.<br/><span className="muted-heading">A tested branch comes out.</span></h2></div><p>You bring the direction. dotshift keeps the coding, testing, and fixing moving until the work passes its completion review.</p></div>
         <div className="workflow-grid">
           <article><div className="step-top"><span>01 / HAND IT OFF</span><ArrowUpRight/></div><div className="workflow-glyph goal-glyph" aria-hidden="true"><span>“Build this.”</span><ArrowRight/><Dotmark/></div><h3>Think in goals.</h3><p>Describe what you want through your MCP client. Work in an existing repo, or let dotshift create a new project in your configured workspace.</p></article>
-          <article><div className="step-top"><span>02 / LET IT WORK</span><RotateCcw/></div><div className="workflow-glyph loop-glyph" aria-hidden="true"><span>build</span><span>test</span><span>fix</span><svg viewBox="0 0 270 32"><path d="M240 1 V17 Q240 28 227 28 H37 Q24 28 24 17 V1"/><path d="m19 7 5-6 5 6"/></svg></div><h3>Keep the loop moving.</h3><p>Tests fail? It tries again. Review finds a gap? Back to the code. Progress is saved between attempts, with limits you can configure.</p></article>
+          <article><div className="step-top"><span>02 / LET IT WORK</span><RotateCcw/></div><div className="workflow-glyph loop-glyph" aria-hidden="true"><span>build</span><span>test</span><span>fix</span><svg viewBox="0 0 270 32"><path d="M240 1 V17 Q240 28 227 28 H37 Q24 28 24 17 V1"/><path d="m19 7 5-6 5 6"/></svg></div><h3>Keep the loop moving.</h3><p>Failed tests and review findings feed the next coding attempt. Progress is saved as it goes, with limits you can configure.</p></article>
           <article><div className="step-top"><span>03 / MAKE THE CALL</span><GitBranch/></div><div className="workflow-glyph branch-glyph" aria-hidden="true"><GitBranch/><span>your next feature</span><span className="glyph-check"><Check/></span></div><h3>Review something real.</h3><p>Get a branch with the work, test results, and a completion review. Inspect the diff and decide when it’s ready to merge.</p></article>
         </div>
       </section>
@@ -199,17 +197,17 @@ export default function Home() {
         <div className="section-wrap">
           <div className="section-top"><div><div className="eyebrow"><span className="section-number">02</span> YOUR SETUP. YOUR SAY.</div><h2>More autonomy.<br/><span className="muted-heading">Same home field.</span></h2></div><p>Your tools shouldn’t need a whole new way of working. dotshift fits around your repositories, agents, and machine.</p></div>
           <div className="ownership-grid">
-            <article><div className="feature-illustration machine-illustration" aria-hidden="true"><div className="machine-frame"><div><Dotmark/><span>localhost</span><span className="small-status-dot"/></div><div className="machine-files"><span>~/your-project</span><span>├ main <span className="muted-code">unchanged</span></span><span>└ dotshift/next-idea <span className="accent-text">●</span></span></div></div><div className="machine-base"/></div><h3>Home is where the code is.</h3><p>Work runs on your computer, in repositories you allow. Every task gets an isolated worktree. Your working copy stays yours.</p><div className="feature-caption"><Monitor size={13}/> LOCAL EXECUTION</div></article>
-            <article><div className="feature-illustration models-illustration" aria-hidden="true"><span>Codex</span><span>Claude Code</span><div className="model-connection"><i/><Dotmark/><i/></div><span className="model-provider">OpenAI · Anthropic · Gemini · Ollama</span></div><h3>Pick your kind of clever.</h3><p>Use your existing subscriptions, or route API requests to your preferred models. Configure fallbacks and strategies for the job.</p><div className="feature-caption"><Code2 size={13}/> YOUR AGENTS & MODELS</div></article>
+            <article><div className="feature-illustration machine-illustration" aria-hidden="true"><div className="machine-frame"><div><Dotmark tone="dark"/><span>localhost</span><span className="small-status-dot"/></div><div className="machine-files"><span>~/your-project</span><span>├ main <span className="muted-code">unchanged</span></span><span>└ dotshift/next-idea <span className="accent-text">●</span></span></div></div><div className="machine-base"/></div><h3>Home is where the code is.</h3><p>Work runs on your computer, in repositories you allow. Every task gets an isolated worktree. Your working copy stays yours.</p><div className="feature-caption"><Monitor size={13}/> LOCAL EXECUTION</div></article>
+            <article><div className="feature-illustration models-illustration" aria-hidden="true"><span>Codex</span><span>Claude Code</span><div className="model-connection"><i/><Dotmark tone="dark"/><i/></div><span className="model-provider">OpenAI · Anthropic · Gemini · Ollama</span></div><h3>Pick your kind of clever.</h3><p>Use your existing subscriptions, or route API requests to your preferred models. Configure fallbacks and strategies for the job.</p><div className="feature-caption"><Code2 size={13}/> YOUR AGENTS & MODELS</div></article>
             <article><div className="feature-illustration persistence-illustration" aria-hidden="true"><div><span className="checkpoint-dot"/><span>progress saved</span><Check size={14}/></div><div className="persistence-line"/><div><span className="checkpoint-dot"/><span>service restarted</span><RotateCcw size={14}/></div><div className="persistence-line active"/><div className="checkpoint-active"><span className="checkpoint-dot"/><span>right where you left off</span><ArrowRight size={14}/></div></div><h3>A little less starting over.</h3><p>Goals keep their progress between attempts. Restart the service and active work resumes from its saved phase and worktree.</p><div className="feature-caption"><RotateCcw size={13}/> PERSISTENT PROGRESS</div></article>
           </div>
           <div className="ownership-bottom"><ShieldCheck size={18}/><p>Autonomy with a handbrake.</p><span>Set iteration limits. Cancel a task. Review every branch.</span><a href={`${REPO}#project-goals`} target="_blank" rel="noreferrer">You’re in control <ArrowUpRight size={14}/></a></div>
         </div>
       </section>
       <Setup/>
-      <section className="faq-section section-wrap" id="faq"><div className="faq-heading"><div className="eyebrow"><span className="section-number">04</span> A FEW GOOD QUESTIONS</div><h2>Before you<br/><span className="muted-heading">clock in.</span></h2><a className="text-link" href={DOCS} target="_blank" rel="noreferrer">Get into the docs <ArrowUpRight size={16}/></a></div><div className="faq-list">{faqs.map(({question, answer}, index) => <details key={question}><summary><span className="faq-number">0{index + 1}</span><span>{question}</span><ChevronDown size={19}/></summary><p>{answer}</p></details>)}</div></section>
-      <section className="closing-section"><div className="section-wrap closing-inner"><div><span className="eyebrow">THAT IDEA YOU KEEP PUTTING OFF?</span><h2>Give it a shift.</h2></div><a className="button button-dark" href="#get-started">Let’s get to work <ArrowUpRight size={21}/></a><Dotmark className="closing-mark"/></div></section>
+      <section className="faq-section section-wrap" id="faq"><div className="faq-heading"><div className="eyebrow"><span className="section-number">04</span> A FEW GOOD QUESTIONS</div><h2>Before you <br/><span className="muted-heading">clock in.</span></h2><a className="text-link" href={DOCS} target="_blank" rel="noreferrer">Get into the docs <ArrowUpRight size={16}/></a></div><div className="faq-list">{faqs.map(({question, answer}, index) => <details key={question}><summary><span className="faq-number">0{index + 1}</span><span>{question}</span><ChevronDown size={19}/></summary><p>{answer}</p></details>)}</div></section>
+      <section className="closing-section"><div className="section-wrap closing-inner"><div><span className="eyebrow">THAT IDEA YOU KEEP PUTTING OFF?</span><h2>Give it a shift.</h2></div><a className="button button-dark" href="#get-started">Let’s get to work <ArrowUpRight size={21}/></a></div></section>
     </main>
-    <footer className="site-footer section-wrap"><div className="footer-top"><a href="#" className="wordmark" aria-label="dotshift home"><Dotmark/>dotshift<span className="wordmark-period">.</span></a><p>Good ideas deserve follow-through.</p><div><a href={REPO} target="_blank" rel="noreferrer">GitHub <ArrowUpRight size={13}/></a><a href={DOCS} target="_blank" rel="noreferrer">Documentation <ArrowUpRight size={13}/></a></div></div><div className="footer-bottom"><span>© {new Date().getFullYear()} dotshift</span><span className="footer-domain"><span className="small-status-dot"/> dotshift.dev</span><span>Locally run. Forward thinking.</span></div></footer>
+    <footer className="site-footer section-wrap"><div className="footer-top"><a href="#" className="wordmark" aria-label="dotshift home"><BrandLogo/></a><p>Good ideas deserve follow-through.</p><div><a href={REPO} target="_blank" rel="noreferrer">GitHub <ArrowUpRight size={13}/></a><a href={DOCS} target="_blank" rel="noreferrer">Documentation <ArrowUpRight size={13}/></a></div></div><div className="footer-bottom"><span>© {new Date().getFullYear()} dotshift</span><span className="footer-domain"><span className="small-status-dot"/> dotshift.dev</span><span>Locally run. Forward thinking.</span></div></footer>
   </>;
 }

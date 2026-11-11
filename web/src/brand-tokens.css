@@ -1,0 +1,11 @@
+:root {
+  --dotshift-ink: #131826;
+  --dotshift-shift-blue: #2F54EB;
+  --dotshift-paper: #F2F4F8;
+  --dotshift-night: #0E1220;
+  --dotshift-shift-blue-dark: #7C98FF;
+  --dotshift-slate: #4A5266;
+  --dotshift-line: #DFE4EB;
+  --dotshift-font: "Manrope", sans-serif;
+  --dotshift-mono: "IBM Plex Mono", monospace;
+}

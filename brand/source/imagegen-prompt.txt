@@ -1,0 +1,13 @@
+Tool: built-in image_gen
+Reference: selected concept 01 / Offset
+Purpose: illustrative brand board; production SVG assets define exact geometry and color.
+
+Use case: logo-brand.
+Asset type: a polished brand identity presentation board for dotshift, developing selected concept "01 / Offset".
+Input image 1 is the approved logo reference. Preserve its essential silhouette faithfully: EXACTLY FIVE equal-sized filled circles, four in a compact two-by-two square at lower left, the fifth offset diagonally above and right. The fifth circle is the same diameter as all four others, never smaller. No connecting lines, extra dots, brackets, letters inside the symbol, or route branches. Brand name is "dotshift", all lowercase, spelled d-o-t-s-h-i-f-t.
+Design one exceptionally refined landscape brand board in a structured editorial grid, broad margins, flat artwork with precise typography. Large hero lockup at top left with an ink five-dot mark and a bold geometric lowercase wordmark inspired by Manrope ExtraBold; the dot on the letter i is normal, centered and ink. Upper right a small all-white reverse logo on an ink background. Middle and bottom: a dark rounded-square app icon with four paper-white circles and only the displaced fifth circle in periwinkle blue; a blue field with white symbol; restrained palette swatches; tasteful typography sample; a wide dark social graphic. Keep the SAME five-dot symbol and same wordmark consistently across every application.
+Palette derived from the current brand: Ink #131826, Shift blue #2F54EB, Paper #F2F4F8, Night #0E1220, dark-background accent #7C98FF. Primary logo is monochrome; a secondary version may color ONLY the displaced fifth circle blue. Four body circles remain solid and equal. Background mainly off-white, with confident navy and blue panels.
+Typography: Manrope for brand headlines, IBM Plex Mono for small technical labels. Clear, restrained, modern independent software identity. Subtle large circle-based graphics may support the design but cannot alter the actual logo.
+Text verbatim only as appropriate: "dotshift", "OFFSET / BRAND IDENTITY", "Big ideas.", "Meet follow-through.", "Manrope", "IBM Plex Mono", "Ink", "#131826", "Shift blue", "#2F54EB", "Paper", "#F2F4F8". Avoid unnecessary small text.
+No photos, no 3D, no shadows, no embossing, no stock brand mockups, no watermarks, no generic AI stars. The result should feel like a professional identity designer's brand system presentation, not a collage of unrelated logos.
+

@@ -1,0 +1,50 @@
+{
+  "brand": "dotshift",
+  "identity": "Offset",
+  "colors": {
+    "ink": "#131826",
+    "shift-blue": "#2F54EB",
+    "paper": "#F2F4F8",
+    "night": "#0E1220",
+    "shift-blue-dark": "#7C98FF",
+    "slate": "#4A5266",
+    "line": "#DFE4EB"
+  },
+  "fonts": {
+    "headings": "Manrope",
+    "body": "Manrope",
+    "code": "IBM Plex Mono"
+  },
+  "mark": {
+    "viewBox": [
+      0,
+      0,
+      64,
+      64
+    ],
+    "radius": 9,
+    "centers": [
+      [
+        13,
+        31
+      ],
+      [
+        33,
+        31
+      ],
+      [
+        13,
+        51
+      ],
+      [
+        33,
+        51
+      ],
+      [
+        49,
+        15
+      ]
+    ]
+  },
+  "clearSpace": 18
+}

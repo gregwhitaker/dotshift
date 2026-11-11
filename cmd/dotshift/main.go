@@ -1,4 +1,4 @@
-// Command dotshift runs a local model router for coding agents.
+// Command dotshift runs local coding jobs, tests, and separate reviews for Dot.
 package main
 
 import (
@@ -15,31 +15,37 @@ import (
 	"time"
 
 	"github.com/gregwhitaker/dotshift/internal/config"
+	"github.com/gregwhitaker/dotshift/internal/dashboard"
 	"github.com/gregwhitaker/dotshift/internal/litellm"
 	"github.com/gregwhitaker/dotshift/internal/router"
 )
 
-const usage = `dotshift: a local model router for coding agents
+const usage = `dotshift: local coding and review for Dot
 
 Usage:
-  dotshift init     [-config FILE] [-mode api|subscription]   write a starter dotshift.yaml
-  dotshift serve    [-config FILE]   start the job runner and MCP intake (API mode also starts the router)
+  dotshift init     [-config FILE] [-mode subscription|api]   write a starter config (subscription by default)
+  dotshift serve    [-config FILE] [-local-only]   start the job runner, dashboard, and optional MCP intake
+  dotshift ui       [-config FILE] [-no-open] [-local-only]   start or reuse the service and open the local dashboard
+  dotshift menubar  [-config FILE] [-app PATH]   open the macOS menu bar app; quitting it keeps work running
+  dotshift service  [-config FILE] install|uninstall   manage macOS login startup and crash recovery
   dotshift status   [-config FILE]   show the execution mode or API router status
-  dotshift stop     [-config FILE]   stop the router
+  dotshift stop     [-config FILE]   stop the service and router, saving active goals
   dotshift check    [-config FILE] [ALIAS...]   check subscription CLI sign-ins, or test API models
-  dotshift usage    [-config FILE] [PERIOD]     show requests, tokens and cost per alias and model (e.g. 7d)
-  dotshift key      [-config FILE]   print the API key clients send to the router
-  dotshift litellm-config [-config FILE]   print the generated LiteLLM config
   dotshift connect  [-revoke] [-new-passcode]
                                    show how to connect ChatGPT, and the approval passcode
 
-Jobs (API mode requires the router):
+Local coding (model aliases and fallback policies come from dotshift.yaml):
   dotshift run [-repo NAME] [-model ALIAS] [-branch NAME] [-base REF] INSTRUCTIONS
                                    run a coding job in a new worktree and wait for it
   dotshift jobs [ID]               list jobs, or show one job's result
   dotshift logs ID                 print a job's agent output
   dotshift cancel ID               stop a running job
   dotshift clean ID                remove the worktree a failed or cancelled job left
+
+Optional API router (init -mode api):
+  dotshift usage    [-config FILE] [PERIOD]   show requests, tokens and estimated cost
+  dotshift key      [-config FILE]   print the API key clients send to the router
+  dotshift litellm-config [-config FILE]   print the generated LiteLLM config
 `
 
 func main() {
@@ -54,7 +60,8 @@ func main() {
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	path := fs.String("config", config.DefaultPath, "path to dotshift.yaml")
 	force := fs.Bool("force", false, "init: overwrite an existing config")
-	mode := fs.String("mode", config.ModeAPI, "init: api or subscription")
+	mode := fs.String("mode", config.ModeSubscription, "init: subscription or api")
+	localOnly := fs.Bool("local-only", false, "serve: disable MCP and its tunnel for this run without changing the config")
 	_ = fs.Parse(args)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -65,7 +72,7 @@ func main() {
 	case "init":
 		err = runInitMode(*path, *force, *mode)
 	case "serve":
-		err = runServe(ctx, *path)
+		err = runServe(ctx, *path, *localOnly)
 	case "status":
 		err = runStatus(ctx, *path)
 	case "stop":
@@ -91,7 +98,7 @@ func main() {
 }
 
 func runInit(path string, force bool) error {
-	return runInitMode(path, force, config.ModeAPI)
+	return runInitMode(path, force, config.ModeSubscription)
 }
 
 func runInitMode(path string, force bool, mode string) error {
@@ -155,13 +162,34 @@ func prepare(path string) (*config.Config, *router.Router, error) {
 	return cfg, router.New(cfg, generated, key), nil
 }
 
-func runServe(ctx context.Context, path string) error {
+func runServe(ctx context.Context, path string, localOnly bool) error {
+	path, err := canonicalConfig(path)
+	if err != nil {
+		return err
+	}
+	dir, err := stateDir(path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	unlock, err := lockService(dir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	ctx, stopService := context.WithCancel(ctx)
+	defer stopService()
 	cfg, r, err := prepare(path)
 	if err != nil {
 		return err
 	}
+	if localOnly {
+		cfg.MCP.Disabled = true
+	}
 	if cfg.UsesSubscriptions() {
-		stopIntake, err := startIntake(path, cfg, nil)
+		stopIntake, err := startRuntime(path, cfg, nil, stopService)
 		if err != nil {
 			return err
 		}
@@ -191,7 +219,7 @@ func runServe(ctx context.Context, path string) error {
 		return err
 	}
 	fmt.Printf("\nRouter is up at %s\nAliases: %s\n\n", r.BaseURL(), strings.Join(cfg.AliasNames(), ", "))
-	stopIntake, err := startIntake(path, cfg, r)
+	stopIntake, err := startRuntime(path, cfg, r, stopService)
 	if err != nil {
 		return err
 	}
@@ -226,6 +254,19 @@ then run:
 }
 
 func runStatus(ctx context.Context, path string) error {
+	path, err := canonicalConfig(path)
+	if err != nil {
+		return err
+	}
+	dir, err := stateDir(path)
+	if err != nil {
+		return err
+	}
+	if service, err := dashboard.Discover(ctx, dir, path); err != nil {
+		return err
+	} else if service != nil {
+		fmt.Printf("Dotshift is running. Dashboard: %s\nOpen an authenticated browser session with `dotshift ui`.\n", service.URL)
+	}
 	cfg, r, err := prepare(path)
 	if err != nil {
 		return err
@@ -251,12 +292,39 @@ func runStatus(ctx context.Context, path string) error {
 }
 
 func runStop(ctx context.Context, path string) error {
+	path, err := canonicalConfig(path)
+	if err != nil {
+		return err
+	}
+	stopped, err := stopService(ctx, path)
+	if err != nil {
+		return err
+	}
+	managed, err := unloadInstalledService(ctx, path)
+	if err != nil {
+		return err
+	}
+	if stopped || managed {
+		return nil
+	}
+	dir, err := stateDir(path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	unlock, err := lockService(dir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	_, r, err := prepare(path)
 	if err != nil {
 		return err
 	}
 	if r == nil {
-		fmt.Println("Subscription mode has no router to stop. Press Ctrl-C in the terminal running `dotshift serve` to stop the service.")
+		fmt.Println("Dotshift is not running.")
 		return nil
 	}
 	if err := r.Stop(ctx); err != nil {

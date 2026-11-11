@@ -1,74 +1,80 @@
-# dotshift brand kit
+# dotshift brand kit: Offset
 
-The dotshift logo is the **Route** mark: one dot comes in, three paths go out, and the path that is doing the work lights up blue. The wordmark is Manrope ExtraBold with the dot on the "i" shifted slightly to the right and colored blue.
+The logo is **Offset**, the selected concept 1: five equal circles, with four in a two-by-two grid and the fifth shifted above and to the right. It expresses steady work moving forward. The primary logo is monochrome; a secondary version colors only the offset circle blue.
 
-All letters in these files are outlined into shapes, so nothing depends on a font being installed.
+The lowercase wordmark uses the existing outlined Manrope ExtraBold lettering with a centered, monochrome dot over the i. All production SVG lettering is outlined and needs no installed font.
 
-## What's here
+## Start here
 
-| Folder | Files | Use it for |
-|---|---|---|
-| `svg/` | `dotshift-logo-*` | Main horizontal logo (mark + name). First choice almost everywhere. |
-| `svg/` | `dotshift-logo-stacked-*` | Mark above the name, for square-ish spaces. |
-| `svg/` | `dotshift-mark-*` | The mark alone (64×64 grid), for avatars, small spaces, CLI docs. |
-| `svg/` | `dotshift-wordmark-*` | The name alone, when the mark already appears nearby. |
-| `svg/` | `dotshift-app-icon.svg`, `dotshift-app-icon-square.svg` | Navy app icon, rounded and full-bleed (iOS and Android round the corners themselves). |
-| `png/` | Same logos as PNG at 1x and 2x, marks at 512 and 1024, app icon at 512 and 1024 | Slides, docs and anywhere SVG isn't accepted. Transparent backgrounds. |
-| `favicon/` | `favicon.ico` (16/32/48), `favicon.svg`, `favicon-16/32.png`, `apple-touch-icon.png`, `icon-192/512.png`, `site.webmanifest` | Websites and docs sites. |
-| `social/` | `dotshift-social-card.png` / `.svg` (1200×630) | GitHub social preview, link previews, OG image. |
+- `guide/dotshift-brand-guide.pdf`: five-page identity, color, typography, voice, and usage guide.
+- `previews/dotshift-offset-production-board.png`: exact production assets in one overview.
+- `previews/dotshift-offset-brand-board.png`: the built-in imagegen concept presentation. Use production SVGs for exact geometry and colors.
+- `svg/dotshift-logo-light.svg`: default logo for a light background.
+- `svg/dotshift-logo-dark.svg`: default logo for a dark background.
 
-Each logo comes in four colorways:
+## Assets
 
-- `light`: for white or light backgrounds.
-- `dark`: for navy, black or dark-mode backgrounds.
-- `mono-black` / `mono-white`: one color only, for print, stamps, or places that can't show color. In mono, the two inactive dots become rings so the "one path is chosen" idea still reads.
+| Folder | Contents | Use |
+| --- | --- | --- |
+| `svg/` | Horizontal and stacked logos, standalone marks and wordmarks | Websites, apps, print, editable artwork |
+| `png/` | Transparent horizontal logos at 1x, 2x, and 4x; marks at 512/1024; stacked logos; app icons | Documents, presentations, image-based applications |
+| `favicon/` | Theme-aware SVG, ICO with 16/32/48 frames, PNG favicons, Apple touch icon, 192/512 icons, manifest | Browser and installed web app icons |
+| `social/` | 1200 x 630 artwork in SVG and PNG, plus 2x PNG | Link previews and GitHub social preview |
+| `patterns/` | Repeat pattern in SVG and PNG | Supporting graphic backgrounds |
+| `tokens/` | Exact palette and geometry in JSON; CSS custom properties | Design and application handoff |
+| `fonts/` | Manrope 400/600/800 and IBM Plex Mono 400; original license files | Supporting typography |
+| `source/` | Vector master, generation scripts, raster export manifest, imagegen prompt | Reproducible source and provenance |
 
-## Colors
+Variants ending in `light` are intended for light backgrounds; `dark` variants are for dark backgrounds. `accent-light` and `accent-dark` color only the offset circle. `mono-black` and `mono-white` are true one-color versions. The app icon's four base circles are white, with a lighter blue offset circle on Ink. The alternate blue app icon uses five white circles.
 
-| Name | Hex | Where |
-|---|---|---|
-| Ink | `#131826` | Mark and name on light backgrounds; app icon background |
-| Route blue | `#2F54EB` | The active dot and the "i" dot on light backgrounds |
-| Idle grey | `#C4C9D4` | Inactive dots on light backgrounds |
-| Paper | `#F2F4F8` | Mark and name on dark backgrounds |
-| Route blue (dark) | `#7C98FF` | Active dot on dark backgrounds |
-| Idle grey (dark) | `#4A5266` | Inactive dots on dark backgrounds |
-| Night | `#0E1220` | Social card background |
+## Color
 
-## Type
+| Token | Hex | Role |
+| --- | --- | --- |
+| Ink | `#131826` | Primary logo, headlines, dark surfaces |
+| Shift blue | `#2F54EB` | Accent on light backgrounds |
+| Paper | `#F2F4F8` | Light surfaces and reverse logo |
+| Night | `#0E1220` | Dark social artwork |
+| Shift blue dark | `#7C98FF` | Accent on dark backgrounds |
+| Slate | `#4A5266` | Supporting text |
+| Line | `#DFE4EB` | Borders and dividers |
 
-- **Wordmark:** Manrope ExtraBold (800), tracking −3.5%, already outlined in the files.
-- **Supporting text** (taglines, docs headings): Manrope Medium/SemiBold. Manrope is free on Google Fonts (SIL Open Font License).
+## Typography and voice
 
-## Usage
+Manrope 800 is the headline and wordmark face; use 600 for subheads and 400 for body copy. IBM Plex Mono 400 is for commands and technical labels. Font licenses are included beside the font files.
 
-- Leave clear space around the logo at least the width of the big input dot on every side.
-- Don't use the horizontal logo smaller than 96 px wide on screens; switch to the mark alone below that.
-- Keep the active dot in the middle path, and keep it the only blue element in the mark.
-- Don't recolor, stretch, rotate, add effects, or re-set the name in another font.
-- Only one dot is ever blue: the active route in the mark and the shifted "i" dot in the name.
+Primary line: **Big ideas. Meet follow-through.**
 
-## Snippets
+Supporting line: **Your machine. Your models. Your branch.**
 
-Website `<head>`:
+Describe concrete outcomes: code, test, fix, review. Keep the tone clear, capable, and grounded. Avoid claims of perfection or guaranteed outcomes. Write the product name as `dotshift`, without an extra terminal period as part of the logo.
 
-```html
-<link rel="icon" href="/favicon.ico" sizes="48x48">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="manifest" href="/site.webmanifest">
-<meta property="og:image" content="/dotshift-social-card.png">
+## Geometry and use
+
+- The mark uses a 64 x 64 viewBox and five circles of radius 9.
+- Centers are `(13, 31)`, `(33, 31)`, `(13, 51)`, `(33, 51)`, and `(49, 15)`.
+- Keep at least one dot diameter of clear space beyond the visible artwork.
+- Use the horizontal logo at 144 px wide or larger. Prefer a 24 px mark; the supplied 16 px favicon is optimized for browser use.
+- Keep all five circles equal, solid, and separated. Never add branches, shrink the offset dot, rotate the mark, or stretch it.
+- Keep the wordmark's i dot centered and the same color as the lettering.
+- Use the square, full-bleed icon for platform masks; use the rounded icon when the image itself must supply its corners.
+
+## Local integration
+
+The root README references these masters. `make brand` synchronizes matching SVGs, icons, fonts, and color tokens into the marketing site and local dashboard; `make brand-check` detects drift. Both web surfaces use Manrope and IBM Plex Mono with the same palette. The macOS menu bar draws the five-circle geometry as a monochrome template, while its app bundle uses the full-color app icon. `make menubar` rebuilds the CLI, dashboard, app icon, and native bundle together. Running services and menu apps need to be relaunched to load a new build; the marketing site is published separately through Sites.
+
+The previous Route kit remains available in Git history.
+
+## Rebuilding
+
+The source scripts require Python with `fonttools` and `reportlab`, and Node with `sharp`. Fonts are bundled. From the repository root:
+
+```sh
+python3 brand/source/build-assets.py
+node brand/source/render-assets.mjs
+python3 brand/source/build-guide.py
 ```
 
-`favicon.svg` switches to the dark colors automatically when the browser is in dark mode.
+The generated guide is also written to `output/pdf/dotshift-brand-guide.pdf`. Raster exports preserve transparency. Run `make brand` after regenerating the masters.
 
-README header that follows GitHub's light/dark theme:
-
-```html
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="brand/svg/dotshift-logo-dark.svg">
-  <img alt="dotshift" src="brand/svg/dotshift-logo-light.svg" height="56">
-</picture>
-```
-
-For the GitHub social preview, upload `social/dotshift-social-card.png` under the repo's Settings > General > Social preview.
+The generated concept board used the built-in imagegen tool; its exact prompt is in `source/imagegen-prompt.txt`. The production assets are constructed from native vector geometry and the existing outlined wordmark.

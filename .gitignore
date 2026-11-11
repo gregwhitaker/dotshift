@@ -4,3 +4,6 @@ dotshift.yaml
 /web/node_modules/
 /web/.vite/
 /bin/
+/build/
+/macos/.build/
+/macos/.swiftpm/

@@ -11,40 +11,30 @@ import (
 	"time"
 
 	"github.com/gregwhitaker/dotshift/internal/config"
+	"github.com/gregwhitaker/dotshift/internal/jobs"
 	"github.com/gregwhitaker/dotshift/internal/mcpintake"
-	"github.com/gregwhitaker/dotshift/internal/router"
 	"github.com/gregwhitaker/dotshift/internal/tunnel"
 )
 
 // authDB is the OAuth database, inside the state directory.
 const authDB = "auth.db"
 
-// startIntake runs the job runner and the MCP intake inside `dotshift serve`.
-// The returned function stops taking requests, cancels jobs still running
-// and closes the stores.
-func startIntake(configPath string, cfg *config.Config, r *router.Router) (func(), error) {
+// startIntake attaches MCP to the shared runner. Its lifetime is independent
+// of the dashboard, and disabling MCP does not disable goal recovery.
+func startIntake(cfg *config.Config, runner *jobs.Runner, dir string) (func(), error) {
 	if cfg.MCP.Disabled {
 		fmt.Println("MCP intake is off (mcp.disabled in the config).")
 		return func() {}, nil
-	}
-	dir, err := stateDir(configPath)
-	if err != nil {
-		return nil, err
 	}
 	passcode, err := mcpintake.Passcode(cfg, dir)
 	if err != nil {
 		return nil, err
 	}
-	runner, closeJobs, err := newRunner(cfg, r, dir)
-	if err != nil {
-		return nil, err
-	}
 	authStore, err := mcpintake.OpenAuthStore(filepath.Join(dir, authDB))
 	if err != nil {
-		closeJobs()
 		return nil, err
 	}
-	closeAll := func() { authStore.Close(); closeJobs() }
+	closeAll := func() { authStore.Close() }
 
 	publicURL, tailscale := cfg.MCP.PublicURL, ""
 	if cfg.MCP.Tunnel == config.TunnelTailscale {
@@ -70,14 +60,6 @@ func startIntake(configPath string, cfg *config.Config, r *router.Router) (func(
 	if err != nil {
 		closeAll()
 		return nil, fmt.Errorf("MCP intake: %w (change mcp.listen, or set mcp.disabled)", err)
-	}
-	if err := runner.ResumeGoals(context.Background()); err != nil {
-		ln.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		runner.Shutdown(ctx, "goal recovery failed")
-		closeAll()
-		return nil, fmt.Errorf("resuming project goals: %w", err)
 	}
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
@@ -108,7 +90,6 @@ func startIntake(configPath string, cfg *config.Config, r *router.Router) (func(
 			funnel.Stop()
 		}
 		_ = srv.Shutdown(ctx)
-		runner.Shutdown(ctx, "dotshift serve stopped")
 		closeAll()
 	}, nil
 }

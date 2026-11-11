@@ -12,12 +12,13 @@ export const metadata: Metadata = {
     siteName: "dotshift",
     title: "Big ideas. Meet follow-through.",
     description: "The local coding engine that turns a goal into a tested, reviewed branch.",
-    images: [{ url: "/social-card.png", width: 1200, height: 630, alt: "dotshift — Big ideas. Meet follow-through." }],
+    images: [{ url: "/dotshift-social-card.png", width: 1200, height: 630, alt: "dotshift — Big ideas. Meet follow-through." }],
   },
-  twitter: { card: "summary_large_image", title: "dotshift — Big ideas. Meet follow-through.", description: "Your machine. Your models. Your branch.", images: ["/social-card.png"] },
+  twitter: { card: "summary_large_image", title: "dotshift — Big ideas. Meet follow-through.", description: "Your machine. Your models. Your branch.", images: ["/dotshift-social-card.png"] },
+  manifest: "/site.webmanifest",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: [{ url: "/favicon.svg?v=offset", type: "image/svg+xml" }, { url: "/favicon.ico?v=offset", sizes: "48x48" }],
+    apple: "/apple-touch-icon.png?v=offset",
   },
 };
 

@@ -1,0 +1,247 @@
+[
+  {
+    "source": "svg/dotshift-logo-light.svg",
+    "target": "png/dotshift-logo-light.png",
+    "width": 334
+  },
+  {
+    "source": "svg/dotshift-logo-light.svg",
+    "target": "png/dotshift-logo-light@2x.png",
+    "width": 668
+  },
+  {
+    "source": "svg/dotshift-logo-light.svg",
+    "target": "png/dotshift-logo-light@4x.png",
+    "width": 1336
+  },
+  {
+    "source": "svg/dotshift-mark-light.svg",
+    "target": "png/dotshift-mark-light-512.png",
+    "width": 512
+  },
+  {
+    "source": "svg/dotshift-mark-light.svg",
+    "target": "png/dotshift-mark-light-1024.png",
+    "width": 1024
+  },
+  {
+    "source": "svg/dotshift-logo-stacked-light.svg",
+    "target": "png/dotshift-logo-stacked-light.png",
+    "width": 1040
+  },
+  {
+    "source": "svg/dotshift-logo-dark.svg",
+    "target": "png/dotshift-logo-dark.png",
+    "width": 334
+  },
+  {
+    "source": "svg/dotshift-logo-dark.svg",
+    "target": "png/dotshift-logo-dark@2x.png",
+    "width": 668
+  },
+  {
+    "source": "svg/dotshift-logo-dark.svg",
+    "target": "png/dotshift-logo-dark@4x.png",
+    "width": 1336
+  },
+  {
+    "source": "svg/dotshift-mark-dark.svg",
+    "target": "png/dotshift-mark-dark-512.png",
+    "width": 512
+  },
+  {
+    "source": "svg/dotshift-mark-dark.svg",
+    "target": "png/dotshift-mark-dark-1024.png",
+    "width": 1024
+  },
+  {
+    "source": "svg/dotshift-logo-stacked-dark.svg",
+    "target": "png/dotshift-logo-stacked-dark.png",
+    "width": 1040
+  },
+  {
+    "source": "svg/dotshift-logo-mono-black.svg",
+    "target": "png/dotshift-logo-mono-black.png",
+    "width": 334
+  },
+  {
+    "source": "svg/dotshift-logo-mono-black.svg",
+    "target": "png/dotshift-logo-mono-black@2x.png",
+    "width": 668
+  },
+  {
+    "source": "svg/dotshift-logo-mono-black.svg",
+    "target": "png/dotshift-logo-mono-black@4x.png",
+    "width": 1336
+  },
+  {
+    "source": "svg/dotshift-mark-mono-black.svg",
+    "target": "png/dotshift-mark-mono-black-512.png",
+    "width": 512
+  },
+  {
+    "source": "svg/dotshift-mark-mono-black.svg",
+    "target": "png/dotshift-mark-mono-black-1024.png",
+    "width": 1024
+  },
+  {
+    "source": "svg/dotshift-logo-stacked-mono-black.svg",
+    "target": "png/dotshift-logo-stacked-mono-black.png",
+    "width": 1040
+  },
+  {
+    "source": "svg/dotshift-logo-mono-white.svg",
+    "target": "png/dotshift-logo-mono-white.png",
+    "width": 334
+  },
+  {
+    "source": "svg/dotshift-logo-mono-white.svg",
+    "target": "png/dotshift-logo-mono-white@2x.png",
+    "width": 668
+  },
+  {
+    "source": "svg/dotshift-logo-mono-white.svg",
+    "target": "png/dotshift-logo-mono-white@4x.png",
+    "width": 1336
+  },
+  {
+    "source": "svg/dotshift-mark-mono-white.svg",
+    "target": "png/dotshift-mark-mono-white-512.png",
+    "width": 512
+  },
+  {
+    "source": "svg/dotshift-mark-mono-white.svg",
+    "target": "png/dotshift-mark-mono-white-1024.png",
+    "width": 1024
+  },
+  {
+    "source": "svg/dotshift-logo-stacked-mono-white.svg",
+    "target": "png/dotshift-logo-stacked-mono-white.png",
+    "width": 1040
+  },
+  {
+    "source": "svg/dotshift-logo-accent-light.svg",
+    "target": "png/dotshift-logo-accent-light.png",
+    "width": 334
+  },
+  {
+    "source": "svg/dotshift-logo-accent-light.svg",
+    "target": "png/dotshift-logo-accent-light@2x.png",
+    "width": 668
+  },
+  {
+    "source": "svg/dotshift-logo-accent-light.svg",
+    "target": "png/dotshift-logo-accent-light@4x.png",
+    "width": 1336
+  },
+  {
+    "source": "svg/dotshift-mark-accent-light.svg",
+    "target": "png/dotshift-mark-accent-light-512.png",
+    "width": 512
+  },
+  {
+    "source": "svg/dotshift-mark-accent-light.svg",
+    "target": "png/dotshift-mark-accent-light-1024.png",
+    "width": 1024
+  },
+  {
+    "source": "svg/dotshift-logo-stacked-accent-light.svg",
+    "target": "png/dotshift-logo-stacked-accent-light.png",
+    "width": 1040
+  },
+  {
+    "source": "svg/dotshift-logo-accent-dark.svg",
+    "target": "png/dotshift-logo-accent-dark.png",
+    "width": 334
+  },
+  {
+    "source": "svg/dotshift-logo-accent-dark.svg",
+    "target": "png/dotshift-logo-accent-dark@2x.png",
+    "width": 668
+  },
+  {
+    "source": "svg/dotshift-logo-accent-dark.svg",
+    "target": "png/dotshift-logo-accent-dark@4x.png",
+    "width": 1336
+  },
+  {
+    "source": "svg/dotshift-mark-accent-dark.svg",
+    "target": "png/dotshift-mark-accent-dark-512.png",
+    "width": 512
+  },
+  {
+    "source": "svg/dotshift-mark-accent-dark.svg",
+    "target": "png/dotshift-mark-accent-dark-1024.png",
+    "width": 1024
+  },
+  {
+    "source": "svg/dotshift-logo-stacked-accent-dark.svg",
+    "target": "png/dotshift-logo-stacked-accent-dark.png",
+    "width": 1040
+  },
+  {
+    "source": "svg/dotshift-app-icon.svg",
+    "target": "png/dotshift-app-icon-512.png",
+    "width": 512
+  },
+  {
+    "source": "svg/dotshift-app-icon.svg",
+    "target": "png/dotshift-app-icon-1024.png",
+    "width": 1024
+  },
+  {
+    "source": "svg/dotshift-app-icon-blue.svg",
+    "target": "png/dotshift-app-icon-blue-1024.png",
+    "width": 1024
+  },
+  {
+    "source": "svg/dotshift-mark-accent-light.svg",
+    "target": "favicon/favicon-16.png",
+    "width": 16
+  },
+  {
+    "source": "svg/dotshift-mark-accent-light.svg",
+    "target": "favicon/favicon-32.png",
+    "width": 32
+  },
+  {
+    "source": "svg/dotshift-mark-accent-light.svg",
+    "target": "favicon/favicon-48.png",
+    "width": 48
+  },
+  {
+    "source": "svg/dotshift-app-icon-square.svg",
+    "target": "favicon/apple-touch-icon.png",
+    "width": 180
+  },
+  {
+    "source": "svg/dotshift-app-icon-square.svg",
+    "target": "favicon/icon-192.png",
+    "width": 192
+  },
+  {
+    "source": "svg/dotshift-app-icon-square.svg",
+    "target": "favicon/icon-512.png",
+    "width": 512
+  },
+  {
+    "source": "social/dotshift-social-card.svg",
+    "target": "social/dotshift-social-card.png",
+    "width": 1200
+  },
+  {
+    "source": "social/dotshift-social-card.svg",
+    "target": "social/dotshift-social-card@2x.png",
+    "width": 2400
+  },
+  {
+    "source": "patterns/dotshift-offset-pattern.svg",
+    "target": "patterns/dotshift-offset-pattern.png",
+    "width": 1280
+  },
+  {
+    "source": "previews/dotshift-offset-production-board.svg",
+    "target": "previews/dotshift-offset-production-board.png",
+    "width": 1600
+  }
+]

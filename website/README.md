@@ -1,5 +1,8 @@
 # dotshift.dev
 
+This optional marketing site runs independently of local coding and review.
+It is not part of dotshift startup, its monitor, or the core build.
+
 The dotshift marketing website, built with React, TypeScript, and Vinext. Product copy follows the parent repository's README. The interactive runner is an illustrative workflow, not a live task monitor.
 
 ## Develop
@@ -12,6 +15,12 @@ npm run dev
 ```
 
 The local URL is http://localhost:5173. Main content and interactive components live in `app/page.tsx`; the responsive design lives in `app/globals.css`.
+
+## Branding
+
+The page uses the Offset logo (concept 1): five equal circles, with one shifted above and to the right of a two-by-two grid. Masters, icons, social artwork, and a brand guide live in the parent `brand/` directory. Runtime copies live in `public/brand/` and `public/`. The primary logo is monochrome; secondary artwork accents only the shifted dot. Colors are Ink `#131826`, Shift blue `#2F54EB`, Paper `#F2F4F8`, and dark-background accent `#7C98FF`. Manrope and IBM Plex Mono are self-hosted in `public/fonts/`, with their SIL Open Font License files.
+
+Run `make brand` from the repository root to synchronize the marketing and dashboard assets, font files, and shared color tokens. `make brand-check` detects drift without changing files. The site uses the Offset repeat pattern behind its workflow preview.
 
 ## Verify and build
 
