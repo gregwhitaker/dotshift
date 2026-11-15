@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.os }}, Go ${{ matrix.go }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            go: stable
+          - os: macos-15
+            go: stable
+          - os: ubuntu-24.04
+            go: '1.25.x'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ matrix.go }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Check formatting and brand assets
+        shell: bash
+        run: |
+          git ls-files -z '*.go' | xargs -0 gofmt -l > "$RUNNER_TEMP/gofmt.txt"
+          if test -s "$RUNNER_TEMP/gofmt.txt"; then
+            cat "$RUNNER_TEMP/gofmt.txt"
+            exit 1
+          fi
+          make brand-check
+      - name: Build and test dashboard
+        run: |
+          make web
+          npm --prefix web test
+          test -z "$(git status --porcelain -- web/dist web/public website/public)"
+      - name: Check release tooling
+        run: python3 scripts/test-release.py
+      - name: Vet and test Go with race detection
+        run: |
+          go vet ./...
+          go test -race ./...
+      - name: Build CLI
+        run: |
+          go build -o dotshift ./cmd/dotshift
+          ./dotshift version
+          ./dotshift --version
+      - name: Test and build native app
+        if: runner.os == 'macOS'
+        run: |
+          make test-menubar
+          bash scripts/build-menubar.sh
+          make test-menubar-lifecycle
+
+  workflows:
+    name: Workflow validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+      - name: Lint GitHub Actions workflows
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          actionlint
+
+  homebrew:
+    name: Homebrew installation
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Update Homebrew
+        run: brew update
+      - name: Install, test, and audit this commit
+        run: python3 scripts/test-homebrew.py
+
+  complete:
+    name: CI passed
+    if: always()
+    needs: [tests, workflows, homebrew]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every check to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          assert all(job['result'] == 'success' for job in results.values()), results
+          PY

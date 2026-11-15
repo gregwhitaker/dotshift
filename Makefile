@@ -1,4 +1,4 @@
-.PHONY: brand brand-check build web test menubar test-menubar test-menubar-lifecycle
+.PHONY: brand brand-check build web test test-release menubar test-menubar test-menubar-lifecycle
 .DEFAULT_GOAL := build
 
 brand:
@@ -17,6 +17,10 @@ web: brand
 test: web
 	npm --prefix web test
 	go test ./...
+	$(MAKE) test-release
+
+test-release:
+	PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-release.py
 
 menubar: build
 	bash scripts/build-menubar.sh

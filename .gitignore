@@ -8,3 +8,4 @@ dotshift.yaml
 /output/
 /macos/.build/
 /macos/.swiftpm/
+/scripts/__pycache__/

@@ -18,9 +18,11 @@ class Dotshift < Formula
 
   def install
     ENV["GOPROXY"] = "off"
-    system formula_opt_bin("go")/"go", "build", *std_go_args(output: "dotshift"), "./cmd/dotshift"
+    ldflags = "-s -w -X main.version=#{version}"
+    system formula_opt_bin("go")/"go", "build", *std_go_args(output: "dotshift", ldflags:), "./cmd/dotshift"
 
     if OS.mac?
+      ENV["DOTSHIFT_VERSION"] = version.to_s unless build.head?
       system "bash", "scripts/build-menubar.sh"
       prefix.install "build/Dotshift.app"
       bin.write_exec_script opt_prefix/"Dotshift.app/Contents/Resources/dotshift"
@@ -52,6 +54,7 @@ class Dotshift < Formula
 
   test do
     assert_match "local coding and review", shell_output("#{bin}/dotshift help")
+    assert_match "dotshift #{version}", shell_output("#{bin}/dotshift version")
     config = testpath/"dotshift.yaml"
     system bin/"dotshift", "init", "-config", config
     assert_match "mode: subscription", config.read

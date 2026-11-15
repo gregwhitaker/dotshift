@@ -27,8 +27,18 @@ swiftc -O -whole-module-optimization -swift-version 5 -target "$target" \
 app="build/Dotshift.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$native/DotshiftMenuBar" "$app/Contents/MacOS/"
-cp dotshift "$app/Contents/Resources/dotshift"
+cp "${DOTSHIFT_CLI_PATH:-dotshift}" "$app/Contents/Resources/dotshift"
 cp macos/Info.plist "$app/Contents/Info.plist"
+if [[ -n "${DOTSHIFT_VERSION:-}" ]]; then
+  bundle_version="${DOTSHIFT_VERSION#v}"
+  bundle_version="${bundle_version%%-*}"
+  if [[ ! "$bundle_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "DOTSHIFT_VERSION must be a semantic version." >&2
+    exit 1
+  fi
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $bundle_version" "$app/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $bundle_version" "$app/Contents/Info.plist"
+fi
 # Keep icon rendering in memory; sips and iconutil write to user caches outside
 # Homebrew's build sandbox, even when their output is inside the build directory.
 swiftc -O -module-cache-path "$CLANG_MODULE_CACHE_PATH" \

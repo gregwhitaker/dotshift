@@ -106,7 +106,8 @@ The formula test initializes a temporary configuration, starts and stops an
 isolated local service, and verifies the macOS app signature. It makes no
 model or tunnel requests.
 
-For the first stable release, create the version tag, add the released source
-archive's `url` and verified `sha256` to the formula, and publish that formula
-update. Keep `head` for development installs. Stable users can then omit
-`--HEAD` when installing and `--fetch-HEAD` when upgrading.
+The [release workflow](releasing.md) creates a source archive and generates a
+matching `dotshift.rb` with its download URL and checksum. After publishing a
+stable release, commit that generated formula to `main`. It retains `head` for
+development installs. Stable users can then omit `--HEAD` when installing and
+`--fetch-HEAD` when upgrading. Prereleases leave the stable formula unchanged.

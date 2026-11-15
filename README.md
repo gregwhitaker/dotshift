@@ -192,6 +192,12 @@ Node.js 24+ is needed only to develop `web/`. Its generated `web/dist` is embedd
 in the Go binary; rebuild it with `make web` after UI edits. Go-only changes can
 use `go test ./...` and `go build` with the checked-in assets.
 
+The full test target also checks release tooling with Python 3.9+. GitHub Actions
+runs Linux/macOS tests, race detection, native lifecycle checks, and a Homebrew
+installation. See the [release guide](docs/releasing.md) for CI setup, packaging
+rehearsals, tagged draft releases, and publishing the stable Homebrew formula.
+`dotshift version` identifies the installed version and source commit.
+
 The optional [macOS status menu](docs/status-menu.md) is a service client.
 The marketing website in `website/` is separate and outside the local runner's
 build and runtime. Core development focuses on local coding, model handoff,

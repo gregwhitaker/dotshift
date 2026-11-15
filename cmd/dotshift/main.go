@@ -23,6 +23,7 @@ import (
 const usage = `dotshift: local coding and review for Dot
 
 Usage:
+  dotshift version                 show the version, source commit, and build date
   dotshift init     [-config FILE] [-mode subscription|api]   write a starter config (subscription by default)
   dotshift serve    [-config FILE] [-local-only]   start the job runner, dashboard, and optional MCP intake
   dotshift ui       [-config FILE] [-no-open] [-local-only]   start or reuse the service and open the local dashboard
@@ -69,6 +70,8 @@ func main() {
 
 	var err error
 	switch cmd {
+	case "version", "--version":
+		fmt.Println(versionString())
 	case "init":
 		err = runInitMode(*path, *force, *mode)
 	case "serve":
