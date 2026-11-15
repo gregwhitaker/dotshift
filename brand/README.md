@@ -61,7 +61,7 @@ Describe concrete outcomes: code, test, fix, review. Keep the tone clear, capabl
 
 ## Local integration
 
-The root README references these masters. `make brand` synchronizes matching SVGs, icons, fonts, and color tokens into the marketing site and local dashboard; `make brand-check` detects drift. Both web surfaces use Manrope and IBM Plex Mono with the same palette. The macOS menu bar draws the five-circle geometry as a monochrome template, while its app bundle uses the full-color app icon. `make menubar` rebuilds the CLI, dashboard, app icon, and native bundle together. Running services and menu apps need to be relaunched to load a new build; the marketing site is published separately through Sites.
+The root README references these masters. `make brand` synchronizes matching SVGs, icons, fonts, and color tokens into the marketing site and local dashboard; `make brand-check` detects drift. Both web surfaces use Manrope and IBM Plex Mono with the same palette. The macOS menu bar draws the five-circle geometry in monochrome; when work needs attention or the service is unavailable, only the upper-right circle uses Shift blue (`#2F54EB` on light menu bars, `#7C98FF` on dark menu bars). The app bundle uses the full-color app icon. `make menubar` rebuilds the CLI, dashboard, app icon, and native bundle together. Running services and menu apps need to be relaunched to load a new build; the marketing site is published separately through Sites.
 
 The previous Route kit remains available in Git history.
 

@@ -6,6 +6,7 @@ import UserNotifications
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem!
+    private let attentionDot = AttentionDotView()
     private let menu = NSMenu()
     private var timer: Timer?
     private var configuration: LaunchConfiguration?
@@ -33,6 +34,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         ready = true
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.menu = menu
+        if let button = statusItem.button {
+            attentionDot.frame = button.bounds
+            attentionDot.autoresizingMask = [.width, .height]
+            attentionDot.setAccessibilityElement(false)
+            button.addSubview(attentionDot)
+        }
         menu.delegate = self
         menu.autoenablesItems = false
         UNUserNotificationCenter.current().delegate = self
@@ -174,7 +181,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
     private func rebuildMenu() {
         let attention = snapshot?.attention.count ?? 0
         let state = busy ?? (errorMessage != nil ? "Unavailable" : configuration == nil ? "Choose configuration" : snapshot == nil ? "Connecting…" : snapshot!.running ? "Running" : "Stopped")
-        statusItem.button?.image = menuIcon(attention: attention > 0 || errorMessage != nil)
+        let needsAttention = attention > 0 || errorMessage != nil
+        statusItem.button?.image = MenuBarIcon.image(attention: needsAttention)
+        attentionDot.isHidden = !needsAttention
+        attentionDot.needsDisplay = true
         statusItem.button?.toolTip = "dotshift · \(state)\n\(snapshot?.active.count ?? 0) active · \(attention) need attention"
         statusItem.button?.setAccessibilityLabel("dotshift, \(state), \(attention) need attention")
         guard !menuOpen else { return }
@@ -279,25 +289,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         alert.informativeText = detail
         alert.addButton(withTitle: "OK")
         alert.runModal()
-    }
-
-    // Draw the five equal circles of the Offset mark as a template, so macOS supplies the
-    // proper color in light/dark menu bars. A smaller corner dot signals attention
-    // without changing the mark or shifting neighboring menu-bar items.
-    private func menuIcon(attention: Bool) -> NSImage {
-        let image = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { _ in
-            NSColor.black.set()
-            // SVG coordinates use a top-left origin; AppKit's unflipped image uses bottom-left.
-            for (x, y) in [(13.0, 31.0), (33.0, 31.0), (13.0, 51.0), (33.0, 51.0), (49.0, 15.0)] {
-                NSBezierPath(ovalIn: NSRect(x: 1 + (x-9)*0.28, y: 1 + (64-y-9)*0.28, width: 5.04, height: 5.04)).fill()
-            }
-            if attention {
-                NSBezierPath(ovalIn: NSRect(x: 15.75, y: 2.75, width: 3.5, height: 3.5)).fill()
-            }
-            return true
-        }
-        image.isTemplate = true
-        return image
     }
 
     @objc private func showSettings(_ sender: Any?) {

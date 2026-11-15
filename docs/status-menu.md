@@ -18,12 +18,13 @@ and choose a configuration. Keep the selected CLI at its saved location; choose
 the configuration again in Settings to use the app's bundled CLI instead.
 
 The menu-bar icon is the Offset mark: five equal dots with one shifted to the
-upper right. It is a monochrome template so macOS supplies the appropriate
-color. A smaller notification dot appears in the lower-right corner when work
-needs attention or the service reports an error. Both states keep the same
-width, so neighboring menu items stay in place. The app bundle uses the
-Ink-and-blue Offset app icon. Rebuild and relaunch the menu app to
-load updated branding.
+upper right. The dots are normally monochrome, with macOS supplying the
+appropriate color. When work needs attention or the service is unavailable,
+the existing upper-right dot turns Shift blue (`#2F54EB` on light menu bars,
+`#7C98FF` on dark menu bars). The other four dots stay monochrome. Both states
+keep the same shape and width, so neighboring menu items stay in place. The
+app bundle uses the Ink-and-blue Offset app icon. Rebuild and relaunch the menu
+app to load updated branding.
 
 The menu shows the service state and counts of active work and work needing
 attention. **Open Dashboard** opens the work monitor; **Models** shows the configured
