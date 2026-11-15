@@ -75,7 +75,9 @@ func newRunner(t *testing.T, script string) *jobs.Runner {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	return &jobs.Runner{Config: cfg, Store: store, Agent: shellAgent{script}, BaseURL: "http://127.0.0.1:4000/v1", APIKey: "sk-test", StateDir: state}
+	runner := &jobs.Runner{Config: cfg, Store: store, Agent: shellAgent{script}, BaseURL: "http://127.0.0.1:4000/v1", APIKey: "sk-test", StateDir: state}
+	t.Cleanup(func() { runner.Shutdown(context.Background(), "test finished") })
+	return runner
 }
 
 func newTestServer(t *testing.T, runner *jobs.Runner, publicURL string) (*httptest.Server, *AuthStore) {

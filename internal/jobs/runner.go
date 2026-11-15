@@ -541,13 +541,39 @@ func (r *Runner) runTests(ctx context.Context, j *Job, command string, out io.Wr
 }
 
 // removeWorktree deletes the job's worktree, and its branch too when asked.
-func (r *Runner) removeWorktree(ctx context.Context, j *Job, deleteBranch bool) {
-	if _, err := git(ctx, j.RepoPath, "worktree", "remove", "--force", j.Worktree); err == nil {
+func (r *Runner) removeWorktree(ctx context.Context, j *Job, deleteBranch bool) error {
+	if j.Worktree != "" {
+		if _, err := git(ctx, j.RepoPath, "worktree", "remove", "--force", j.Worktree); err != nil {
+			// A crash can occur after Git removes the worktree but before its
+			// path is cleared in the database. Only accept an absent checkout
+			// when Git no longer has a registration for it either.
+			if _, statErr := os.Lstat(j.Worktree); !os.IsNotExist(statErr) {
+				return err
+			}
+			worktrees, listErr := git(ctx, j.RepoPath, "worktree", "list", "--porcelain", "-z")
+			if listErr != nil {
+				return listErr
+			}
+			for _, field := range strings.Split(worktrees, "\x00") {
+				if path, ok := strings.CutPrefix(field, "worktree "); ok && realPath(path) == realPath(j.Worktree) {
+					return err
+				}
+			}
+		}
 		j.Worktree = ""
 	}
 	if deleteBranch {
-		_, _ = git(ctx, j.RepoPath, "branch", "-D", j.Branch)
+		if _, err := git(ctx, j.RepoPath, "branch", "-D", j.Branch); err != nil {
+			branch, listErr := git(ctx, j.RepoPath, "branch", "--list", j.Branch)
+			if listErr != nil {
+				return listErr
+			}
+			if branch != "" {
+				return err
+			}
+		}
 	}
+	return nil
 }
 
 // Get implements Service.
@@ -600,6 +626,9 @@ func (r *Runner) Cancel(ctx context.Context, id string) error {
 		return fmt.Errorf("job %s already %s", id, j.Status)
 	}
 	if j.Goal != nil {
+		if j.Status == Running && j.Goal.CleanupPending {
+			return fmt.Errorf("job %s has passed review and is finishing cleanup", id)
+		}
 		if err := r.Store.cancelGoal(ctx, j); err != nil {
 			return err
 		}

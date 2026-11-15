@@ -95,7 +95,9 @@ func (s *Store) claimGoal(ctx context.Context, j *Job) error {
 
 func (s *Store) cancelGoal(ctx context.Context, j *Job) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE jobs SET status = ?, error = 'cancelled', finished_at = ?
-		WHERE id = ? AND run_token = ? AND status IN (?, ?, ?)`, Cancelled, unix(time.Now()), j.ID, j.RunToken, Queued, Running, Blocked)
+		WHERE id = ? AND run_token = ? AND status IN (?, ?, ?)
+		AND NOT (status = ? AND COALESCE(json_extract(NULLIF(goal, ''), '$.cleanup_pending'), 0) = 1)`,
+		Cancelled, unix(time.Now()), j.ID, j.RunToken, Queued, Running, Blocked, Running)
 	if err != nil {
 		return err
 	}

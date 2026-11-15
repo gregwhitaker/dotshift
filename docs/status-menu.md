@@ -3,6 +3,9 @@
 This optional status client is separate from the background coding service.
 The service does not depend on the menu app.
 
+The [Homebrew package](homebrew.md) includes the menu app on macOS. The following
+instructions build it directly from a source checkout.
+
 Build the native app with macOS 13+, Xcode Command Line Tools, Go, and Node.js:
 
 ```sh

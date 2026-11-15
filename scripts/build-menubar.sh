@@ -9,37 +9,31 @@ fi
 
 export CLANG_MODULE_CACHE_PATH="$PWD/build/module-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$CLANG_MODULE_CACHE_PATH"
-swift build --disable-sandbox --cache-path build/swift-cache --package-path macos --scratch-path build/swift -c release
+# The release bundle has two local modules and no package dependencies.
+# Compile them directly so SwiftPM's Foundation temporary-file writes do not
+# escape a package manager's build directory. SwiftPM still runs native tests.
+native="$PWD/build/native"
+mkdir -p "$native" "$CLANG_MODULE_CACHE_PATH"
+target="$(uname -m)-apple-macosx13.0"
+swiftc -O -whole-module-optimization -swift-version 5 -target "$target" \
+  -module-cache-path "$CLANG_MODULE_CACHE_PATH" \
+  -parse-as-library -emit-library -static -emit-module -module-name MenuBarCore \
+  -emit-module-path "$native/MenuBarCore.swiftmodule" \
+  -o "$native/libMenuBarCore.a" macos/Sources/MenuBarCore/*.swift
+swiftc -O -whole-module-optimization -swift-version 5 -target "$target" \
+  -module-cache-path "$CLANG_MODULE_CACHE_PATH" \
+  -I "$native" -L "$native" -lMenuBarCore \
+  -o "$native/DotshiftMenuBar" macos/Sources/DotshiftMenuBar/*.swift
 app="build/Dotshift.app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" build/Dotshift.iconset
-cp build/swift/release/DotshiftMenuBar "$app/Contents/MacOS/"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp "$native/DotshiftMenuBar" "$app/Contents/MacOS/"
 cp dotshift "$app/Contents/Resources/dotshift"
 cp macos/Info.plist "$app/Contents/Info.plist"
-for size in 16 32 128 256 512; do
-  sips -z "$size" "$size" brand/png/dotshift-app-icon-1024.png --out "build/Dotshift.iconset/icon_${size}x${size}.png" >/dev/null
-  double=$((size * 2))
-  sips -z "$double" "$double" brand/png/dotshift-app-icon-1024.png --out "build/Dotshift.iconset/icon_${size}x${size}@2x.png" >/dev/null
-done
-# Package the PNG representations directly. Unlike iconutil this also works in
-# build sandboxes without access to the user's IconServices cache.
-python3 - <<'PY'
-from pathlib import Path
-import struct
-
-types = {
-    'icp4': '16x16', 'icp5': '32x32', 'icp6': '32x32@2x',
-    'ic07': '128x128', 'ic08': '256x256', 'ic09': '512x512',
-    'ic10': '512x512@2x', 'ic11': '16x16@2x',
-    'ic12': '32x32@2x', 'ic13': '128x128@2x', 'ic14': '256x256@2x',
-}
-chunks = []
-for kind, size in types.items():
-    png = Path(f'build/Dotshift.iconset/icon_{size}.png').read_bytes()
-    chunks.append(kind.encode('ascii') + struct.pack('>I', len(png) + 8) + png)
-body = b''.join(chunks)
-Path('build/Dotshift.app/Contents/Resources/Dotshift.icns').write_bytes(
-    b'icns' + struct.pack('>I', len(body) + 8) + body)
-PY
+# Keep icon rendering in memory; sips and iconutil write to user caches outside
+# Homebrew's build sandbox, even when their output is inside the build directory.
+swiftc -O -module-cache-path "$CLANG_MODULE_CACHE_PATH" \
+  -o "$native/build-icon" scripts/build-menubar-icon.swift
+"$native/build-icon" brand/png/dotshift-app-icon-1024.png "$app/Contents/Resources/Dotshift.icns"
 # An ad-hoc signature gives local builds a stable bundle identity. Distribution
 # builds should set a Developer ID identity and be notarized separately.
 codesign --force --sign "${DOTSHIFT_SIGN_IDENTITY:--}" "$app/Contents/Resources/dotshift"

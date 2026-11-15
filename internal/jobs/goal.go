@@ -26,7 +26,10 @@ const (
 // GoalProgress is checkpointed after every phase. The original objective is
 // Job.Prompt, and the branch/worktree and latest test output live on Job.
 type GoalProgress struct {
-	Phase             string            `json:"phase"`
+	Phase string `json:"phase"`
+	// CleanupPending checkpoints successful review before removing the worktree.
+	// Recovery finishes cleanup without rerunning agents or validation.
+	CleanupPending    bool              `json:"cleanup_pending,omitempty"`
 	Iterations        int               `json:"iterations"`
 	MaxIterations     int               `json:"max_iterations"`
 	Failures          int               `json:"consecutive_failures"`
@@ -108,6 +111,9 @@ func (r *Runner) ResumeGoal(ctx context.Context, req ResumeGoalRequest) (*Job, e
 	if r.running[j.ID] != nil || alive(j.RunnerPID) {
 		return nil, errors.New("goal worker is still active; wait for it to stop before resuming")
 	}
+	if j.Goal.CleanupPending && strings.TrimSpace(req.Input) != "" {
+		return nil, errors.New("goal already passed review; resume without input to finish cleanup, then use send_input for new work")
+	}
 	modelChanged := req.Model != "" && req.Model != j.Model
 	if req.Model != "" {
 		j.Model = req.Model
@@ -179,14 +185,16 @@ func (r *Runner) ResumeGoal(ctx context.Context, req ResumeGoalRequest) (*Job, e
 		}
 		j.Goal.MaxIterations = *req.MaxIterations
 	}
-	if j.Goal.MaxIterations > 0 && j.Goal.Iterations >= j.Goal.MaxIterations {
+	if !j.Goal.CleanupPending && j.Goal.MaxIterations > 0 && j.Goal.Iterations >= j.Goal.MaxIterations {
 		return nil, errors.New("raise max_iterations or set it to 0 to resume this goal")
 	}
 	if input := strings.TrimSpace(req.Input); input != "" {
 		j.Goal.Input += "\n" + input
 	}
 	j.Goal.Failures = 0
-	j.Goal.Phase = goalWorking
+	if !j.Goal.CleanupPending {
+		j.Goal.Phase = goalWorking
+	}
 	if _, err := r.goalRepo(ctx, j); err != nil {
 		return nil, err
 	}
@@ -245,6 +253,17 @@ func (r *Runner) goalRepo(ctx context.Context, j *Job) (config.Repo, error) {
 			return repo, err
 		}
 	}
+	if j.Goal.CleanupPending {
+		// Cleanup may already have removed the checkout before a crash. Git
+		// still validates removal against the allowlisted repository. If the
+		// checkout remains, retain the identity checks below before deleting it.
+		if j.Worktree == "" {
+			return repo, nil
+		}
+		if _, err := os.Lstat(j.Worktree); os.IsNotExist(err) {
+			return repo, nil
+		}
+	}
 	if j.Worktree == "" {
 		return repo, errors.New("the goal's worktree was removed; start a new goal from its branch")
 	}
@@ -269,10 +288,23 @@ func (r *Runner) runGoal(ctx context.Context, j *Job) {
 	// Terminate that process group before touching its checkout again.
 	err := killGroup(j.AgentPID)
 	j.AgentPID = 0
-	if err == nil {
+	if err == nil && !j.Goal.CleanupPending {
 		err = r.executeGoal(ctx, j)
 	}
 	bg := context.Background()
+	if err == nil && (j.Goal.CleanupPending || ctx.Err() == nil) {
+		// Persist successful review while the job is still running. Cancellation
+		// is fenced once cleanup starts, and a crash can resume this step even
+		// after the checkout has gone. Publish Done only when follow-ups can run.
+		j.Goal.CleanupPending = true
+		j.Status, j.Error, j.RunnerPID = Running, "", os.Getpid()
+		j.FinishedAt = time.Time{}
+		if err = r.Store.saveGoal(bg, j); err == nil {
+			if _, err = r.goalRepo(bg, j); err == nil {
+				err = r.removeWorktree(bg, j, j.Commits == 0)
+			}
+		}
+	}
 	if errors.Is(err, errGoalStopped) {
 		// The cancel tool owns the terminal status. Release the old worker
 		// without writing any of its stale progress over a resumed worker.
@@ -283,16 +315,14 @@ func (r *Runner) runGoal(ctx context.Context, j *Job) {
 	j.RunnerPID, j.AgentPID = 0, 0
 	j.FinishedAt = time.Now()
 	switch {
-	case ctx.Err() != nil:
+	case ctx.Err() != nil && !j.Goal.CleanupPending:
 		j.Status, j.Error = Queued, "service stopped; goal will resume when dotshift serve starts"
 		j.FinishedAt = time.Time{}
 	case err != nil:
 		j.Status, j.Error = Blocked, err.Error()
 	default:
 		j.Status, j.Error = Done, ""
-		// Keep ownership through cleanup so another process cannot clean
-		// this worktree while the successful worker is removing it.
-		j.RunnerPID = os.Getpid()
+		j.Goal.CleanupPending = false
 	}
 	if err := r.Store.saveGoal(bg, j); err != nil {
 		if errors.Is(err, errGoalStopped) {
@@ -302,13 +332,6 @@ func (r *Runner) runGoal(ctx context.Context, j *Job) {
 			fmt.Fprintf(os.Stderr, "dotshift: saving goal %s: %v\n", j.ID, err)
 		}
 		return
-	}
-	if j.Status == Done {
-		r.removeWorktree(bg, j, j.Commits == 0)
-		j.RunnerPID = 0
-		if err := r.Store.saveGoal(bg, j); err != nil {
-			fmt.Fprintf(os.Stderr, "dotshift: saving goal cleanup %s: %v\n", j.ID, err)
-		}
 	}
 }
 

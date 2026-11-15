@@ -14,6 +14,12 @@ work committed on it. Your working copy is never touched.
    The finished worktree is removed and the branch stays. A job that changed
    nothing leaves no branch.
 
+A job reports `done` after its worktree cleanup finishes, so an immediate
+follow-up can reuse its branch. Successful review is checkpointed before
+cleanup; a restart finishes cleanup without rerunning the agents. If cleanup
+fails, the job blocks with the Git error. Fix that problem and use `resume_goal`
+without new input to finish cleanup, then send any follow-up instructions.
+
 Jobs can run in repositories you configure below, or in projects registered
 inside `projects.root` (see [Starting new projects](#starting-new-projects-with-dot)):
 

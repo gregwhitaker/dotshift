@@ -21,6 +21,10 @@ controls the coding agents; Dot's own conversation stays in Dot.
 
 ## Set up local coding
 
+Homebrew users can install the CLI and macOS menu app from the repository's
+[tap](docs/homebrew.md). Before the first tagged release, use the documented
+`--HEAD` installation.
+
 Build with Go 1.25+. Install the official Codex and Claude Code CLIs and sign in
 using your subscription accounts:
 
