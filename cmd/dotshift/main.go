@@ -41,6 +41,7 @@ Local coding (model aliases and fallback policies come from dotshift.yaml):
   dotshift jobs [ID]               list jobs, or show one job's result
   dotshift logs ID                 print a job's agent output
   dotshift cancel ID               stop a running job
+  dotshift dismiss [-undo] ID      hide or restore the current issue in Needs attention; keep saved work
   dotshift clean ID                remove the worktree a failed or cancelled job left
 
 Optional API router (init -mode api):

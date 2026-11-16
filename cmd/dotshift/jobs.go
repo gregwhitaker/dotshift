@@ -63,6 +63,33 @@ func init() {
 		return nil
 	})
 
+	commands["dismiss"] = command("dismiss", func(fs *flag.FlagSet) {
+		fs.Bool("undo", false, "show the current issue in Needs attention again")
+	}, func(ctx context.Context, configPath string, fs *flag.FlagSet) error {
+		if fs.NArg() != 1 {
+			return fmt.Errorf("usage: dotshift dismiss [-undo] [-config FILE] JOB_ID")
+		}
+		runner, _, closeStore, err := openRunner(configPath)
+		if err != nil {
+			return err
+		}
+		defer closeStore()
+		j, err := runner.Get(ctx, fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		dismissed := !fs.Lookup("undo").Value.(flag.Getter).Get().(bool)
+		if _, err := runner.SetAttentionDismissed(ctx, j.ID, j.AttentionVersion(), dismissed); err != nil {
+			return err
+		}
+		if dismissed {
+			fmt.Printf("Dismissed %s from Needs attention. Saved work and history are kept.\n", j.ID)
+		} else {
+			fmt.Printf("Restored %s to Needs attention.\n", j.ID)
+		}
+		return nil
+	})
+
 	commands["clean"] = withJob("clean", func(ctx context.Context, runner *jobs.Runner, j *jobs.Job) error {
 		if j.Worktree == "" {
 			fmt.Printf("Job %s has no worktree left.\n", j.ID)

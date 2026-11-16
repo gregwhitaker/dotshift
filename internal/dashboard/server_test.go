@@ -37,6 +37,9 @@ func (f *fakeService) ResumeGoal(_ context.Context, r jobs.ResumeGoalRequest) (*
 	f.resumed = &r
 	return f.job, nil
 }
+func (f *fakeService) SetAttentionDismissed(context.Context, string, string, bool) (*jobs.Job, error) {
+	return nil, jobs.ErrAttentionChanged
+}
 
 func testHandler(t *testing.T) (http.Handler, *fakeService, Record) {
 	t.Helper()
@@ -128,6 +131,56 @@ func TestJobViewsAndActions(t *testing.T) {
 	w = request(h, r, "POST", "/api/jobs/goal-1/cancel", `{}`, nil)
 	if w.Code != 202 || f.cancelled != "goal-1" {
 		t.Fatalf("cancel: %d", w.Code)
+	}
+}
+
+func TestAttentionActionPersistsAndRejectsStaleOrInvalidRequests(t *testing.T) {
+	ctx := context.Background()
+	store, err := jobs.OpenStore(filepath.Join(t.TempDir(), "jobs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	j := &jobs.Job{ID: "failed-task", Status: jobs.Failed, Error: "kept failure", Summary: "kept history", RunToken: "private-run-token"}
+	if err := store.Save(ctx, j); err != nil {
+		t.Fatal(err)
+	}
+	_, _, record := testHandler(t)
+	h := newHandler(Options{Jobs: &jobs.Runner{Store: store}}, record)
+	path := "/api/jobs/failed-task/attention"
+	body, _ := json.Marshal(map[string]any{"version": j.AttentionVersion(), "dismissed": true})
+	for _, invalid := range []string{`{}`, `{"version":"v"}`, `{"version":"","dismissed":true}`, `{"version":"v","dismissed":"yes"}`, `{"version":"v","dismissed":true,"status":"done"}`, string(body) + ` {}`} {
+		if w := request(h, record, "POST", path, invalid, nil); w.Code != 400 {
+			t.Fatalf("invalid body accepted: %s: %d", invalid, w.Code)
+		}
+	}
+	if w := request(h, record, "POST", path, string(body), func(r *http.Request) { r.Header.Del("Authorization") }); w.Code != 401 {
+		t.Fatalf("unauthenticated dismissal: %d", w.Code)
+	}
+	for _, dismissed := range []bool{true, true, false, true} {
+		body, _ := json.Marshal(map[string]any{"version": j.AttentionVersion(), "dismissed": dismissed})
+		w := request(h, record, "POST", path, string(body), nil)
+		var view jobView
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &view) != nil || view.AttentionDismissed != dismissed || view.Status != jobs.Failed || view.Error != j.Error || view.Summary != j.Summary {
+			t.Fatalf("attention response: %d %s", w.Code, w.Body.String())
+		}
+		if strings.Contains(w.Body.String(), "private-run-token") {
+			t.Fatal("attention version exposed the worker token")
+		}
+	}
+	w := request(h, record, "GET", "/api/jobs", "", nil)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"attention_dismissed":true`) || !strings.Contains(w.Body.String(), "failed-task") {
+		t.Fatalf("history lost acknowledgment: %s", w.Body.String())
+	}
+	j.Error = "new issue"
+	if err := store.Save(ctx, j); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(h, record, "POST", path, string(body), nil); w.Code != 409 {
+		t.Fatalf("stale dismissal: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(h, record, "POST", "/api/jobs/missing/attention", string(body), nil); w.Code != 404 {
+		t.Fatalf("missing job: %d", w.Code)
 	}
 }
 

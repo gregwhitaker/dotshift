@@ -65,6 +65,31 @@ func TestDesktopPollingNeverStartsOrStopsService(t *testing.T) {
 			t.Fatal("bridge exposed session credentials")
 		}
 	}
+	for _, dismissed := range []bool{true, false} {
+		args := []string{"dismiss", "-config", path}
+		if !dismissed {
+			args = append(args, "-undo")
+		}
+		args = append(args, "attention")
+		if output, err := cli(t, args...); err != nil {
+			t.Fatalf("dismiss command: %v %s", err, output)
+		}
+		snapshot, err := desktopStatus(context.Background(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var work []struct {
+			ID        string `json:"id"`
+			Status    string `json:"status"`
+			Dismissed bool   `json:"attention_dismissed"`
+		}
+		if err := json.Unmarshal(snapshot.Jobs, &work); err != nil {
+			t.Fatal(err)
+		}
+		if len(work) != 1 || work[0].ID != "attention" || work[0].Status != "blocked" || work[0].Dismissed != dismissed {
+			t.Fatalf("desktop lost dismissal or job history: %+v", work)
+		}
+	}
 	after, err := dashboard.Discover(context.Background(), state, path)
 	if err != nil || after == nil || before.PID != after.PID || before.Instance != after.Instance {
 		t.Fatalf("polling disturbed the service: %+v %v", after, err)

@@ -28,6 +28,7 @@ type Service interface {
 	Get(context.Context, string) (*jobs.Job, error)
 	Cancel(context.Context, string) error
 	ResumeGoal(context.Context, jobs.ResumeGoalRequest) (*jobs.Job, error)
+	SetAttentionDismissed(context.Context, string, string, bool) (*jobs.Job, error)
 }
 
 // Options supplies the shared runner and service lifecycle to the dashboard.
@@ -70,24 +71,26 @@ func Start(o Options) (*Server, error) {
 func (s *Server) Close(ctx context.Context) error { return s.http.Shutdown(ctx) }
 
 type jobView struct {
-	ID            string             `json:"id"`
-	Repo          string             `json:"repo"`
-	Prompt        string             `json:"prompt"`
-	Model         string             `json:"model"`
-	ExecutionMode string             `json:"execution_mode"`
-	Branch        string             `json:"branch"`
-	BaseCommit    string             `json:"base_commit"`
-	Status        jobs.Status        `json:"status"`
-	Error         string             `json:"error"`
-	Summary       string             `json:"summary"`
-	Commits       int                `json:"commits"`
-	DiffStat      string             `json:"diffstat"`
-	TestResult    string             `json:"test_result"`
-	TestOutput    string             `json:"test_output,omitempty"`
-	CreatedAt     time.Time          `json:"created_at"`
-	StartedAt     *time.Time         `json:"started_at"`
-	FinishedAt    *time.Time         `json:"finished_at"`
-	Goal          *jobs.GoalProgress `json:"goal"`
+	ID                 string             `json:"id"`
+	Repo               string             `json:"repo"`
+	Prompt             string             `json:"prompt"`
+	Model              string             `json:"model"`
+	ExecutionMode      string             `json:"execution_mode"`
+	Branch             string             `json:"branch"`
+	BaseCommit         string             `json:"base_commit"`
+	Status             jobs.Status        `json:"status"`
+	Error              string             `json:"error"`
+	Summary            string             `json:"summary"`
+	Commits            int                `json:"commits"`
+	DiffStat           string             `json:"diffstat"`
+	TestResult         string             `json:"test_result"`
+	TestOutput         string             `json:"test_output,omitempty"`
+	CreatedAt          time.Time          `json:"created_at"`
+	StartedAt          *time.Time         `json:"started_at"`
+	FinishedAt         *time.Time         `json:"finished_at"`
+	Goal               *jobs.GoalProgress `json:"goal"`
+	AttentionVersion   string             `json:"attention_version"`
+	AttentionDismissed bool               `json:"attention_dismissed"`
 }
 
 func describe(j *jobs.Job, detail bool) jobView {
@@ -96,6 +99,7 @@ func describe(j *jobs.Job, detail bool) jobView {
 		mode = "api"
 	}
 	v := jobView{ID: j.ID, Repo: j.Repo, Prompt: j.Prompt, Model: j.Model, ExecutionMode: mode, Branch: j.Branch, BaseCommit: j.BaseCommit, Status: j.Status, Error: j.Error, Summary: j.Summary, Commits: j.Commits, DiffStat: j.DiffStat, TestResult: j.TestResult, CreatedAt: j.CreatedAt, Goal: j.Goal}
+	v.AttentionVersion, v.AttentionDismissed = j.AttentionVersion(), j.AttentionDismissed()
 	if !j.StartedAt.IsZero() {
 		v.StartedAt = &j.StartedAt
 	}
@@ -185,6 +189,32 @@ func newHandler(o Options, record Record) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"output": patch, "truncated": truncated})
+	})
+	mux.HandleFunc("POST /api/jobs/{id}/attention", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Version   string `json:"version"`
+			Dismissed *bool  `json:"dismissed"`
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil || input.Version == "" || input.Dismissed == nil {
+			writeError(w, http.StatusBadRequest, "An attention version and dismissal choice are required.")
+			return
+		}
+		if err := decoder.Decode(new(any)); err != io.EOF {
+			writeError(w, http.StatusBadRequest, "Expected one JSON object.")
+			return
+		}
+		updated, err := o.Jobs.SetAttentionDismissed(r.Context(), r.PathValue("id"), input.Version, *input.Dismissed)
+		if errors.Is(err, jobs.ErrAttentionChanged) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, describe(updated, true))
 	})
 	mux.HandleFunc("POST /api/jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		j := get(w, r)

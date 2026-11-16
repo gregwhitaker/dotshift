@@ -148,6 +148,14 @@ completion notes. It can cancel or resume unfinished work. Start new work with
 Dot or `dotshift run`; project creation and job submission live in the coding
 interface. Closing the browser or optional status menu leaves work running.
 
+To clear an issue you have reviewed, open the job and choose **Dismiss from
+attention**. It leaves the dashboard's Needs attention list and the menu bar's
+attention count, while keeping its status, branch, files, and history in
+**All work**. Use **Show in attention** to undo. A new failure or blocker after
+resuming needs attention again. You can also use
+`dotshift dismiss -config ~/.config/dotshift/dotshift.yaml JOB_ID`, or add
+`-undo` to restore it.
+
 Tasks, goals, terminal runs, and follow-ups share the same coding, fallback,
 testing, and review loop. Review receives the actual diff, changed files, base
 and tested commits, and test output. Findings go back into coding. The latest
@@ -188,6 +196,7 @@ setup above; put flags before positional arguments such as job IDs.
 | `run -repo NAME [-model ALIAS] "instructions"` | Run a local coding job and wait |
 | `jobs [ID]`, `logs ID` | Inspect saved work and output |
 | `cancel ID` | Stop a job and preserve its work |
+| `dismiss [-undo] ID` | Hide or restore the current issue in Needs attention; keep work and history |
 | `clean ID` | Remove an unfinished job's retained worktree |
 | `status`, `stop` | Check or stop the local service |
 

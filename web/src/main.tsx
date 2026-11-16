@@ -692,6 +692,25 @@ function GoalDetail({
       setPending(false);
     }
   }
+  async function setAttentionDismissed(dismissed: boolean) {
+    if (!job || pending) return;
+    setPending(true);
+    setActionError("");
+    try {
+      const updated = await api<Job>(`/jobs/${encodeURIComponent(id)}/attention`, {
+        method: "POST",
+        body: JSON.stringify({ version: job.attention_version, dismissed }),
+      });
+      setJob(updated);
+    } catch (e) {
+      setActionError(
+        e instanceof Error ? e.message : "Could not update attention.",
+      );
+    } finally {
+      setRevision((v) => v + 1);
+      setPending(false);
+    }
+  }
   if (!job)
     return (
       <div className="page">
@@ -733,6 +752,18 @@ function GoalDetail({
           </div>
         </div>
         <div className="detail-actions">
+          {(attention(job) || job.attention_dismissed) && (
+            <button
+              className="secondary"
+              disabled={pending || !connected}
+              onClick={() => void setAttentionDismissed(!job.attention_dismissed)}
+            >
+              <Icon name={job.attention_dismissed ? "alert" : "check"} size={16} />
+              {job.attention_dismissed
+                ? "Show in attention"
+                : "Dismiss from attention"}
+            </button>
+          )}
           {active(job) && (
             <button
               className="secondary"
@@ -764,6 +795,23 @@ function GoalDetail({
       {error && (
         <div className="notice warning" role="alert">
           {error}
+        </div>
+      )}
+      {actionError && !dialog && (
+        <div className="notice warning" role="alert">
+          {actionError}
+        </div>
+      )}
+      {job.attention_dismissed && (
+        <div className="notice" role="status">
+          <Icon name="check" />
+          <div>
+            <strong>Dismissed from attention</strong>
+            <p>
+              This job stays in All work with its files and history. A new issue
+              after resuming will need attention again.
+            </p>
+          </div>
         </div>
       )}
       {(job.error || wait) && (

@@ -783,6 +783,9 @@ button {
   gap: 5px;
 }
 .detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   padding-top: 23px;
 }
 .phase-strip {

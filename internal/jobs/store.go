@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 	run_token   TEXT NOT NULL DEFAULT '',
 	execution_mode TEXT NOT NULL DEFAULT '',
 	request_id TEXT NOT NULL DEFAULT '',
-	request_hash TEXT NOT NULL DEFAULT ''
+	request_hash TEXT NOT NULL DEFAULT '',
+	attention_dismissed TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS jobs_created ON jobs (created_at);
 CREATE TABLE IF NOT EXISTS model_availability (
@@ -94,7 +95,7 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("open job database %s: %w", path, err)
 	}
-	for _, column := range []string{"parent", "goal", "run_token", "execution_mode", "request_id", "request_hash"} {
+	for _, column := range []string{"parent", "goal", "run_token", "execution_mode", "request_id", "request_hash", "attention_dismissed"} {
 		if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN ` + column + ` TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()
 			return nil, fmt.Errorf("upgrade job database %s: %w", path, err)
@@ -113,6 +114,9 @@ func (s *Store) Close() error { return s.db.Close() }
 const columns = `id, repo, repo_path, prompt, model, branch, base_commit, worktree, status,
 	error, summary, commits, diffstat, test_result, test_output, exit_code, log_path,
 	runner_pid, agent_pid, created_at, started_at, finished_at, parent, goal, run_token, execution_mode, request_id, request_hash`
+
+// Worker saves deliberately exclude user-owned attention acknowledgments.
+const readColumns = columns + `, attention_dismissed`
 
 var saveJobSQL = func() string {
 	var updates []string
@@ -157,7 +161,7 @@ func (s *Store) Save(ctx context.Context, j *Job) error {
 
 // Get returns one job.
 func (s *Store) Get(ctx context.Context, id string) (*Job, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+columns+` FROM jobs WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT `+readColumns+` FROM jobs WHERE id = ?`, id)
 	j, err := scan(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w %q", ErrNotFound, id)
@@ -182,7 +186,7 @@ func (s *Store) byRequest(ctx context.Context, id string) (*Job, error) {
 
 // List returns all jobs, newest first.
 func (s *Store) List(ctx context.Context) ([]*Job, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+columns+` FROM jobs ORDER BY created_at DESC, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+readColumns+` FROM jobs ORDER BY created_at DESC, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +239,7 @@ func scan(r scanner) (*Job, error) {
 	var created, started, finished int64
 	err := r.Scan(&j.ID, &j.Repo, &j.RepoPath, &j.Prompt, &j.Model, &j.Branch, &j.BaseCommit, &j.Worktree, &status,
 		&j.Error, &j.Summary, &j.Commits, &j.DiffStat, &j.TestResult, &j.TestOutput, &j.ExitCode, &j.LogPath,
-		&j.RunnerPID, &j.AgentPID, &created, &started, &finished, &j.Parent, &goal, &j.RunToken, &j.ExecutionMode, &j.RequestID, &j.RequestHash)
+		&j.RunnerPID, &j.AgentPID, &created, &started, &finished, &j.Parent, &goal, &j.RunToken, &j.ExecutionMode, &j.RequestID, &j.RequestHash, &j.dismissedAttentionVersion)
 	if err != nil {
 		return nil, err
 	}

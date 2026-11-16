@@ -29,6 +29,28 @@ final class MenuBarCoreTests: XCTestCase {
         XCTAssertEqual(try snapshot([work]).jobs[0].phase, "Needs input")
     }
 
+    func testDismissedIssuesStayOutOfAttentionAndDoNotBecomeCompletions() throws {
+        let issues = [job("blocked", status: "blocked"), job("failed", status: "failed"), job("input", status: "waiting_input"), job("bad-tests", status: "done", test: "failed")]
+        var tracker = NotificationTracker()
+        XCTAssertTrue(tracker.changes(in: try snapshot(issues)).isEmpty)
+        let dismissed = issues.map { original -> [String: Any] in
+            var work = original
+            work["attention_dismissed"] = true
+            return work
+        }
+        let state = try snapshot(dismissed)
+        XCTAssertEqual(state.jobs.count, 4)
+        XCTAssertTrue(state.attention.isEmpty)
+        XCTAssertTrue(state.completed.isEmpty)
+        XCTAssertEqual(state.jobs.last?.phase, "Tests failed")
+        XCTAssertTrue(tracker.changes(in: state).isEmpty)
+        let restored = try snapshot(issues)
+        XCTAssertEqual(restored.attention.count, 4)
+        let events = tracker.changes(in: restored)
+        XCTAssertEqual(events.count, 4)
+        XCTAssertTrue(events.allSatisfy { $0.kind == .attention })
+    }
+
     func testNotificationTransitionsDoNotReplayHistoryOrCallFailedTestsComplete() throws {
         var tracker = NotificationTracker()
         XCTAssertTrue(tracker.changes(in: try snapshot([job(), job("old", status: "done")])).isEmpty)

@@ -39,7 +39,7 @@ public struct Snapshot: Decodable {
     public var active: [WorkItem] { jobs.filter(\.isActive) }
     public var attention: [WorkItem] { jobs.filter(\.needsAttention) }
     public var completed: [WorkItem] {
-        jobs.filter { $0.status == "done" && !$0.needsAttention }
+        jobs.filter { $0.status == "done" && $0.test_result != "failed" }
             .sorted { ($0.finished_at ?? $0.created_at) > ($1.finished_at ?? $1.created_at) }
     }
 }
@@ -50,6 +50,7 @@ public struct WorkItem: Decodable {
     public let prompt: String
     public let status: String
     public let test_result: String?
+    public let attention_dismissed: Bool?
     public let created_at: String
     public let finished_at: String?
     public let goal: Progress?
@@ -63,7 +64,7 @@ public struct WorkItem: Decodable {
 
     public var isActive: Bool { status == "running" || status == "queued" }
     public var needsAttention: Bool {
-        ["blocked", "failed", "waiting_input"].contains(status) || (status == "done" && test_result == "failed")
+        attention_dismissed != true && (["blocked", "failed", "waiting_input"].contains(status) || (status == "done" && test_result == "failed"))
     }
     public var title: String {
         let line = prompt.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: .newlines).first ?? ""
@@ -118,7 +119,7 @@ public struct NotificationTracker {
             next[work.id] = state
             guard let previous, previous[work.id] != state else { continue }
             if work.needsAttention { events.append(WorkEvent(kind: .attention, work: work)) }
-            else if work.status == "done" { events.append(WorkEvent(kind: .completed, work: work)) }
+            else if work.status == "done" && work.test_result != "failed" { events.append(WorkEvent(kind: .completed, work: work)) }
         }
         previous = next
         return events

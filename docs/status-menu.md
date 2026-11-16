@@ -31,6 +31,13 @@ attention. **Open Dashboard** opens the work monitor; **Models** shows the confi
 aliases and policies. Start new work by asking Dot. Work submenus show up to five tasks with their current phase;
 select one to open its details, or use **View All** for a filtered list.
 
+To clear a reviewed issue, select it from **Needs Attention** and click
+**Dismiss from attention** in the dashboard. The count and blue dot update on
+the next refresh. The job remains in **All work**, with its status, files, and
+history intact; **Show in attention** restores it. Resuming can produce a new
+issue that needs attention again. Dismissing work does not clear a service
+connection error or turn a failed test result into a successful completion.
+
 **Connections** checks local service status, the remote MCP health endpoint,
 subscription CLI sign-in, and observed model cooldowns. These checks make no
 model requests and do not estimate remaining subscription allowance. Work

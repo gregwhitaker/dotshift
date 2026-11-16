@@ -47,6 +47,8 @@ export type Job = {
   started_at: string | null;
   finished_at: string | null;
   goal: Goal | null;
+  attention_version: string;
+  attention_dismissed: boolean;
 };
 export type Filter = "all" | "active" | "attention" | "done";
 export function filterFromSearch(search: string): Filter {
@@ -58,8 +60,9 @@ export function filterFromSearch(search: string): Filter {
 export const active = (job: Job) =>
   job.status === "queued" || job.status === "running";
 export const attention = (job: Job) =>
-  ["blocked", "failed", "waiting_input"].includes(job.status) ||
-  (job.status === "done" && job.test_result === "failed");
+  !job.attention_dismissed &&
+  (["blocked", "failed", "waiting_input"].includes(job.status) ||
+    (job.status === "done" && job.test_result === "failed"));
 export const resumable = (job: Job) =>
   !!job.goal && ["blocked", "cancelled", "failed"].includes(job.status);
 export const waiting = (job: Job) =>

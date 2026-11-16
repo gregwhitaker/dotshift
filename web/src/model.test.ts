@@ -57,7 +57,35 @@ const job = (values: Partial<Job>): Job => ({
     max_iterations: 10,
     report: { status: "continue", summary: "", next_steps: "" },
   },
+  attention_version: "issue-1",
+  attention_dismissed: false,
   ...values,
+});
+
+test("dismissed issues leave attention but remain in history and can resume", () => {
+  for (const status of ["blocked", "failed", "waiting_input", "done"] as const) {
+    const dismissed = job({
+      status,
+      test_result: "failed",
+      attention_dismissed: true,
+    });
+    assert.equal(attention(dismissed), false);
+    assert.equal(selectJobs([dismissed], "attention", "", "").length, 0);
+    assert.deepEqual(selectJobs([dismissed], "all", "", ""), [dismissed]);
+    assert.equal(
+      statusLabel(dismissed),
+      status === "done"
+        ? "Tests failed"
+        : status === "failed"
+          ? "Failed"
+          : "Needs input",
+    );
+    assert.equal(attention({ ...dismissed, attention_dismissed: false }), true);
+  }
+  assert.equal(
+    resumable(job({ status: "blocked", attention_dismissed: true })),
+    true,
+  );
 });
 
 test("overview filters intersect repository, status, and search", () => {

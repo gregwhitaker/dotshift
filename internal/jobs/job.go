@@ -106,6 +106,9 @@ type Job struct {
 	Goal *GoalProgress
 	// RunToken fences a goal worker from a later worker that resumes it.
 	RunToken string
+	// Attention acknowledgments are user-owned metadata, separate from runner
+	// checkpoints. A changed issue or a new run no longer matches this version.
+	dismissedAttentionVersion string
 }
 
 // RepoInfo describes an allowlisted repo.
