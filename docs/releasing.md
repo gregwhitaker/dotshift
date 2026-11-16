@@ -1,5 +1,10 @@
 # CI and releases
 
+The first release uses Homebrew as the default installation path on macOS and
+Linux. It includes the CLI and, on macOS, a locally built and signed menu app.
+Developer ID signing and notarization are follow-up work for direct Mac
+installers; they do not block the Homebrew release.
+
 The workflows live in `.github/workflows/ci.yml` and
 `.github/workflows/release.yml`. Push them to `main` to enable GitHub Actions.
 They use the repository's built-in `GITHUB_TOKEN`; no personal token or model
@@ -122,5 +127,8 @@ gregwhitaker/dotshift/dotshift` from the public tap on a clean machine. Keep the
 `head` stanza for development installations. Prerelease drafts deliberately
 omit a stable formula so release candidates cannot replace the stable version.
 
-For the first release, also update the Homebrew guide's introductory commands
-from the temporary `--HEAD` instructions to the stable installation command.
+For the first stable release, update the README, Homebrew guide, API guide,
+and website setup commands from the temporary `--HEAD` instructions to
+`brew install gregwhitaker/dotshift/dotshift`. Remove `--fetch-HEAD` from the
+Homebrew upgrade command too. Publish these changes only after the release
+assets and stable formula are available, then verify the documented setup.

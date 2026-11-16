@@ -21,22 +21,29 @@ controls the coding agents; Dot's own conversation stays in Dot.
 
 ## Set up local coding
 
-Homebrew users can install the CLI and macOS menu app from the repository's
-[tap](docs/homebrew.md). Before the first tagged release, use the documented
-`--HEAD` installation.
-
-Build with Go 1.25+. Install the official Codex and Claude Code CLIs and sign in
-using your subscription accounts:
+Install with Homebrew on macOS or Linux. The package includes the CLI and, on
+macOS, the menu bar app. Until the first stable release, install the current
+`main` branch with `--HEAD`:
 
 ```sh
-go build -o dotshift ./cmd/dotshift
-codex login
-claude auth login
-./dotshift init
+brew tap gregwhitaker/dotshift https://github.com/gregwhitaker/dotshift.git
+brew install --HEAD gregwhitaker/dotshift/dotshift
 ```
 
-`init` now defaults to subscription mode. Add an allowed Git repository and its
-validation command to `dotshift.yaml`. Keep the generated model choices:
+The [Homebrew guide](docs/homebrew.md) covers requirements, updates, and removal.
+Install the official Codex and Claude Code CLIs, sign in using your subscription
+accounts, and create a configuration outside Homebrew's Cellar:
+
+```sh
+codex login
+claude auth login
+mkdir -p ~/.config/dotshift
+dotshift init -config ~/.config/dotshift/dotshift.yaml
+```
+
+`init` defaults to subscription mode. Add an allowed Git repository and its
+validation command to `~/.config/dotshift/dotshift.yaml`. Keep the generated
+model choices:
 
 ```yaml
 aliases:
@@ -64,14 +71,22 @@ can also contain explicit model names your accounts support. If needed, set
 `jobs.agent.command` and `jobs.claude_command` to absolute CLI paths.
 
 ```sh
-./dotshift check              # checks CLI installation and sign-in; no model calls
-./dotshift service install    # macOS: start now, at login, and after a crash
-./dotshift connect            # connection URL and authorization instructions for Dot
+dotshift check -config ~/.config/dotshift/dotshift.yaml
+# macOS: start the service and open the menu app
+dotshift service -config ~/.config/dotshift/dotshift.yaml install
+dotshift menubar -config ~/.config/dotshift/dotshift.yaml
+dotshift connect -config ~/.config/dotshift/dotshift.yaml
 ```
 
-On other platforms, use `./dotshift serve` in the foreground or under your own
-service manager. Remote Dot access uses Tailscale Funnel; configure it using
-[the connection guide](docs/mcp.md). Local terminal jobs do not need a tunnel.
+`check` verifies CLI installation and sign-in without model calls. On macOS,
+`service install` starts the service now, at login, and after a crash; `menubar`
+opens the included status app. On Linux, start
+`dotshift serve -config ~/.config/dotshift/dotshift.yaml` in the foreground or
+under your own service manager.
+
+Remote Dot access uses Tailscale Funnel; configure it using
+[the connection guide](docs/mcp.md), then use `connect` for the connection URL
+and authorization instructions. Local terminal jobs do not need a tunnel.
 Keep the computer awake and connected while it works.
 
 Then ask Dot:
@@ -122,10 +137,10 @@ jobs too. See [local coding](docs/coding.md) for repository and worktree details
 ## Check progress and recover work
 
 ```sh
-./dotshift ui                 # open the local work monitor
-./dotshift jobs               # list saved jobs
-./dotshift jobs TASK_ID       # result, branch, tests, and model decisions
-./dotshift logs TASK_ID       # recorded agent output
+dotshift ui -config ~/.config/dotshift/dotshift.yaml
+dotshift jobs -config ~/.config/dotshift/dotshift.yaml
+dotshift jobs -config ~/.config/dotshift/dotshift.yaml TASK_ID
+dotshift logs -config ~/.config/dotshift/dotshift.yaml TASK_ID
 ```
 
 The browser is a small monitor: work, model choices, logs, tests, changes, and
@@ -157,7 +172,9 @@ MCP intake is exposed through the configured tunnel.
 
 ## Commands
 
-All commands accept `-config FILE` (default `dotshift.yaml`).
+All commands accept `-config FILE` (default `dotshift.yaml` in the current
+directory). Use `-config ~/.config/dotshift/dotshift.yaml` with the Homebrew
+setup above; put flags before positional arguments such as job IDs.
 
 | Command | Purpose |
 | --- | --- |
@@ -167,6 +184,7 @@ All commands accept `-config FILE` (default `dotshift.yaml`).
 | `connect` | Show Dot connection details; `-revoke` disconnects clients |
 | `check [ALIAS...]` | Check configured agent access |
 | `ui [-no-open] [-local-only]` | Open or reconnect to the local monitor |
+| `menubar` | Open the macOS status menu; quitting it leaves work running |
 | `run -repo NAME [-model ALIAS] "instructions"` | Run a local coding job and wait |
 | `jobs [ID]`, `logs ID` | Inspect saved work and output |
 | `cancel ID` | Stop a job and preserve its work |
@@ -182,6 +200,18 @@ accounting. Existing configurations retain their execution mode; configs that
 omit `jobs.mode` retain the older API behavior.
 
 ## Development
+
+To build from source instead of using Homebrew, install Go 1.25+, clone this
+repository, and build with the checked-in dashboard assets:
+
+```sh
+git clone https://github.com/gregwhitaker/dotshift.git
+cd dotshift
+go build -o dotshift ./cmd/dotshift
+```
+
+Use `./dotshift` in place of `dotshift` in the setup commands above. To develop
+the dashboard too, install Node.js 24+ and use:
 
 ```sh
 make                  # build the monitor and ./dotshift

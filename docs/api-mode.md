@@ -6,7 +6,7 @@ configuration; Docker and usage accounting are not part of subscription setup.
 
 ## API mode requirements
 
-- Go 1.25+ to build
+- Dotshift installed with [Homebrew](homebrew.md)
 - Docker, which runs the LiteLLM proxy
 - Codex CLI for coding tasks and project goals
 - API keys for the providers you want, as environment variables
@@ -14,12 +14,22 @@ configuration; Docker and usage accounting are not part of subscription setup.
 ## API mode quick start
 
 ```sh
-go install github.com/gregwhitaker/dotshift/cmd/dotshift@latest
+brew tap gregwhitaker/dotshift https://github.com/gregwhitaker/dotshift.git
+brew install --HEAD gregwhitaker/dotshift/dotshift
 
-dotshift init -mode api            # writes an API configuration
+mkdir -p ~/.config/dotshift-api
+dotshift init -mode api -config ~/.config/dotshift-api/dotshift.yaml
 export ANTHROPIC_API_KEY=...       # and/or OPENAI_API_KEY, GEMINI_API_KEY
-dotshift serve                     # starts the router and MCP intake, Ctrl-C stops them
+# Add repositories and test commands to ~/.config/dotshift-api/dotshift.yaml
+# Start Docker, then start the router and MCP intake (Ctrl-C stops them)
+dotshift serve -config ~/.config/dotshift-api/dotshift.yaml
 ```
+
+Until the first stable release is published, Homebrew installs the current
+`main` branch with `--HEAD`. This example uses a separate config directory to
+keep API mode state apart from subscription setup. Pass
+`-config ~/.config/dotshift-api/dotshift.yaml` to subsequent commands, before
+positional arguments such as model aliases or job IDs.
 
 `dotshift serve` prints the base URL (`http://127.0.0.1:4000/v1` by default)
 and follows the router's logs.

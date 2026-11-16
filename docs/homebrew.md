@@ -1,8 +1,8 @@
 # Install with Homebrew
 
-The repository includes a Homebrew tap for the CLI and, on macOS, the menu bar
-app. Before the first tagged release, the formula builds the current `main`
-branch with `--HEAD`:
+Homebrew is the recommended installation path on macOS and Linux. It installs
+the CLI and, on macOS, the menu bar app. Until the first stable release is
+published, install the current `main` branch with `--HEAD`:
 
 ```sh
 brew tap gregwhitaker/dotshift https://github.com/gregwhitaker/dotshift.git
@@ -10,14 +10,17 @@ brew install --HEAD gregwhitaker/dotshift/dotshift
 ```
 
 The explicit tap URL is required because the source repository is named
-`dotshift`, rather than Homebrew's conventional `homebrew-dotshift`. These
-commands become available when the formula is published to `main`.
+`dotshift`, rather than Homebrew's conventional `homebrew-dotshift`.
 
 Homebrew installs Go and uses Apple's Git on macOS, or installs Git on Linux.
 macOS builds require macOS 13 or later and Apple's Command Line Tools
 (`xcode-select --install`). The dashboard assets are already included, so
 installation does not require Node.js.
 The menu app is compiled and signed locally. Linux installs the CLI only.
+
+For development, see the [source build instructions](../README.md#development).
+The macOS app ZIPs in release artifacts are ad-hoc signed test builds; use
+Homebrew for the initial installation.
 
 ## Set up
 

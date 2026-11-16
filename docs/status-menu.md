@@ -3,22 +3,19 @@
 This optional status client is separate from the background coding service.
 The service does not depend on the menu app.
 
-The [Homebrew package](homebrew.md) includes the menu app on macOS. The following
-instructions build it directly from a source checkout.
-
-Build the native app with macOS 13+, Xcode Command Line Tools, Go, and Node.js:
+Install with [Homebrew](homebrew.md), then open the included menu app using
+the configuration created during setup:
 
 ```sh
-make menubar
-./dotshift menubar -config /path/to/dotshift.yaml
+dotshift menubar -config ~/.config/dotshift/dotshift.yaml
 ```
 
-This creates `build/Dotshift.app` with its own bundled CLI. The launcher remembers
-your configuration, working directory, and executable search path, so it finds
-the same coding CLIs as your terminal. You can move the app to Applications and
-use `dotshift menubar -app /Applications/Dotshift.app`, or open the app directly
-and choose a configuration. Keep the selected CLI at its saved location; choose
-the configuration again in Settings to use the app's bundled CLI instead.
+Homebrew installs the app at `$(brew --prefix dotshift)/Dotshift.app`, with its
+own bundled CLI. The launcher remembers your configuration, working directory,
+and executable search path, so it finds the same coding CLIs as your terminal.
+You can also open the app directly and choose a configuration. Keep the selected
+CLI at its saved location; choose the configuration again in Settings to use
+the app's bundled CLI instead. See the Homebrew guide when upgrading.
 
 The menu-bar icon is the Offset mark: five equal dots with one shifted to the
 upper right. The dots are normally monochrome, with macOS supplying the
@@ -26,7 +23,7 @@ appropriate color. When work needs attention or the service is unavailable,
 the existing upper-right dot turns Shift blue (`#2F54EB` on light menu bars,
 `#7C98FF` on dark menu bars). The other four dots stay monochrome. Both states
 keep the same shape and width, so neighboring menu items stay in place. The
-app bundle uses the Ink-and-blue Offset app icon. Rebuild and relaunch the menu
+app bundle uses the Ink-and-blue Offset app icon. Update and relaunch the menu
 app to load updated branding.
 
 The menu shows the service state and counts of active work and work needing
@@ -50,6 +47,20 @@ the menu app and reconnects to or starts the service; it is independent of
 **Quit Menu Bar App only quits the menu app.** It never stops the service,
 cancels tasks, or removes service startup. Closing Settings also leaves work
 running. Use **Service → Stop Service** or `dotshift stop` to stop explicitly.
+
+## Build and test from source
+
+For development, build the native app with macOS 13+, Xcode Command Line Tools,
+Go, and Node.js:
+
+```sh
+make menubar
+./dotshift menubar -config /path/to/dotshift.yaml
+```
+
+This creates `build/Dotshift.app` with its own bundled CLI. You can move it to
+Applications and launch it with
+`./dotshift menubar -config /path/to/dotshift.yaml -app /Applications/Dotshift.app`.
 
 Run the native model/notification/command tests with `make test-menubar`.
 After building the app, `make test-menubar-lifecycle` uses a macOS desktop

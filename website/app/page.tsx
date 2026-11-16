@@ -80,31 +80,33 @@ function WorkflowDemo() {
 }
 
 const setupCommands = {
-  subscription: `# Build dotshift from source (Go 1.25+)
-git clone https://github.com/gregwhitaker/dotshift.git
-cd dotshift
-go build -o dotshift ./cmd/dotshift
+  subscription: `# Install with Homebrew (main until the first stable release)
+brew tap gregwhitaker/dotshift https://github.com/gregwhitaker/dotshift.git
+brew install --HEAD gregwhitaker/dotshift/dotshift
 
 # Sign in with the installed agent CLIs
 codex login
 claude auth login
-./dotshift init -mode subscription
+mkdir -p ~/.config/dotshift
+dotshift init -config ~/.config/dotshift/dotshift.yaml
 
-# Add your repos and test commands to dotshift.yaml
-./dotshift check
-./dotshift serve`,
-  api: `# Install dotshift (Go 1.25+)
-go install github.com/gregwhitaker/dotshift/cmd/dotshift@latest
+# Add repos and test commands to ~/.config/dotshift/dotshift.yaml
+dotshift check -config ~/.config/dotshift/dotshift.yaml
+dotshift serve -config ~/.config/dotshift/dotshift.yaml`,
+  api: `# Install with Homebrew (main until the first stable release)
+brew tap gregwhitaker/dotshift https://github.com/gregwhitaker/dotshift.git
+brew install --HEAD gregwhitaker/dotshift/dotshift
 
-# Create your local configuration
-dotshift init
+# Create a separate API mode configuration
+mkdir -p ~/.config/dotshift-api
+dotshift init -mode api -config ~/.config/dotshift-api/dotshift.yaml
 
 # Set a key for your chosen provider
 export OPENAI_API_KEY="your-api-key"
 
-# Add your repos and test commands to dotshift.yaml
+# Add repos and test commands to ~/.config/dotshift-api/dotshift.yaml
 # Start Docker, then start the service
-dotshift serve`,
+dotshift serve -config ~/.config/dotshift-api/dotshift.yaml`,
 };
 
 function Setup() {
@@ -125,11 +127,11 @@ function Setup() {
       <h2>Less setup.<br/><span className="muted-heading">More starting.</span></h2>
       <p>Bring a project, pick your agents, and give them something worth building.</p>
       <ol className="setup-steps">
-        <li><span>1</span><div><strong>Make yourself at home.</strong><p>Install dotshift on your machine with Go 1.25+.</p></div></li>
+        <li><span>1</span><div><strong>Make yourself at home.</strong><p>Install dotshift with Homebrew on macOS or Linux. The Mac menu app is included.</p></div></li>
         <li><span>2</span><div><strong>Choose how you run.</strong><p>Use your Codex and Claude Code subscriptions, or bring API keys and Docker.</p></div></li>
         <li><span>3</span><div><strong>Give it a place to work.</strong><p>Add a repository and test command. Connect your MCP client to hand off a goal.</p></div></li>
       </ol>
-      <a className="text-link" href={`${REPO}#connecting-your-dot-mcp`} target="_blank" rel="noreferrer">Read the full setup guide <ArrowUpRight size={17}/></a>
+      <a className="text-link" href={`${REPO}/blob/main/docs/homebrew.md`} target="_blank" rel="noreferrer">Read the full setup guide <ArrowUpRight size={17}/></a>
     </div>
     <div className="setup-terminal">
       <div className="setup-tabs" role="tablist" aria-label="Installation mode">
