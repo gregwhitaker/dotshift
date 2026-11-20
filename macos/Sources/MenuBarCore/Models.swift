@@ -40,6 +40,12 @@ public struct Snapshot: Decodable {
     public var currentWork: [WorkItem] { jobs.filter(\.isCurrent) }
     public var active: [WorkItem] { currentWork.filter(\.isActive) }
     public var attention: [WorkItem] { currentWork.filter(\.needsAttention) }
+    // Routine coding failures belong to Dot. Keep them visible as stopped
+    // work, but reserve personal alerts for a specific question or access need.
+    public var needsYou: [WorkItem] { currentWork.filter(\.needsUserInput) }
+    public var ongoing: [WorkItem] {
+        currentWork.filter { $0.isActive || ($0.needsAttention && !$0.needsUserInput) }
+    }
     public var completed: [WorkItem] {
         currentWork.filter(\.isCompleted)
             .sorted { ($0.finished_at ?? $0.created_at) > ($1.finished_at ?? $1.created_at) }
@@ -97,6 +103,13 @@ public struct WorkItem: Decodable {
     public var needsAttention: Bool {
         attention_dismissed != true && resolved_by == nil && (display?.attention ?? (["blocked", "failed", "waiting_input"].contains(status) || (status == "done" && test_result == "failed")))
     }
+    public var needsUserInput: Bool {
+        needsAttention && (display?.kind == "needs_input" || (display == nil && status == "waiting_input"))
+    }
+    public var activity: String {
+        if !isActive && needsAttention && !needsUserInput { return "Waiting for Dot to continue" }
+        return phase
+    }
     public var title: String {
         if let title = work_title ?? suppliedTitle, !title.isEmpty { return title }
         let line = prompt.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: .newlines).first ?? ""
@@ -149,10 +162,10 @@ public struct NotificationTracker {
         var events = [WorkEvent]()
         for work in snapshot.currentWork {
             let id = work.work_id ?? work.id
-            let state = "\(work.id):" + (work.needsAttention ? "attention:\(work.status)" : work.status)
+            let state = "\(work.id):" + (work.needsUserInput ? "input:\(work.display?.detail ?? work.status)" : work.status)
             next[id] = state
             guard let previous, previous[id] != state else { continue }
-            if work.needsAttention { events.append(WorkEvent(kind: .attention, work: work)) }
+            if work.needsUserInput { events.append(WorkEvent(kind: .attention, work: work)) }
             else if work.isCompleted { events.append(WorkEvent(kind: .completed, work: work)) }
         }
         previous = next

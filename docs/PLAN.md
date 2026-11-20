@@ -23,8 +23,9 @@ waiting for OpenAI. Dot's conversation remains in Dot.
 - One coding/test/review loop for tasks, goals, and follow-ups.
 - Saved progress, branch isolation, cancellation, resume, and idempotent retries.
 - Login startup, crash recovery, tunnel supervision, and authenticated access.
-- A small optional monitor for current work, issues, and results. Put logs and
-  technical details behind disclosure; keep follow-ups and recovery in Dot.
+- A menu bar app as the primary macOS interface: readiness, current work, and
+  specific user input. Put the browser archive, logs, and service controls under
+  Troubleshooting; keep requests, results, follow-ups, and recovery in Dot.
 - Explicit application of tested and reviewed changes to a clean checkout.
   Preserve local edits and require fresh validation after divergent integration.
 
@@ -34,8 +35,8 @@ waiting for OpenAI. Dot's conversation remains in Dot.
 - Dashboard statistics cards and product marketing inside the work monitor.
 - API router, Docker setup, and accounting in the primary onboarding path.
   Existing API mode and its additional providers remain an explicit option.
-- Expansion of the native app, marketing site, billing UI, or additional intake
-  integrations. The optional macOS status menu remains only a service client.
+- Expansion into a project dashboard, marketing site, billing UI, or additional
+  intake integrations. The macOS menu remains a small service client.
 - Another chat interface or a system that attempts to change Dot's own model.
 
 ## Architecture

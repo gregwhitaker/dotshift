@@ -20,25 +20,32 @@ func init() {
 	var noOpen, localOnly bool
 	var route string
 	commands["ui"] = command("ui", func(fs *flag.FlagSet) {
-		fs.BoolVar(&noOpen, "no-open", false, "start or reuse the dashboard and print its URL without opening a browser")
+		fs.BoolVar(&noOpen, "no-open", false, "start or reuse the service without opening an interface")
 		fs.BoolVar(&localOnly, "local-only", false, "disable MCP and its tunnel for this run without changing the config")
-		fs.StringVar(&route, "path", "/", "monitor path to open, such as /models")
+		fs.StringVar(&route, "path", "", "explicit browser path, such as /history; macOS defaults to the menu bar app")
 	}, func(ctx context.Context, path string, fs *flag.FlagSet) error {
 		if fs.NArg() != 0 {
 			return errors.New("usage: dotshift ui [-config FILE] [-no-open] [-local-only] [-path PATH]")
 		}
-		if _, err := (dashboard.Record{}).BrowserRoute(route); err != nil {
+		browserRoute := route
+		if browserRoute == "" {
+			browserRoute = "/"
+		}
+		if _, err := (dashboard.Record{}).BrowserRoute(browserRoute); err != nil {
 			return err
 		}
 		record, err := ensureUI(ctx, path, localOnly)
 		if err != nil {
 			return err
 		}
-		browserURL, err := record.BrowserRoute(route)
+		if runtime.GOOS == "darwin" && !noOpen && route == "" {
+			return launchMenuBar(ctx, path, "")
+		}
+		browserURL, err := record.BrowserRoute(browserRoute)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Dashboard: %s\n", browserURL)
+		fmt.Printf("Local status: %s\n", browserURL)
 		if !record.MCPEnabled {
 			fmt.Println("MCP and its tunnel are disabled for this running service.")
 		}

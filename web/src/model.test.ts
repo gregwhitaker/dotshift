@@ -14,6 +14,8 @@ import {
   title,
   workTitle,
   completed,
+  needsYou,
+  ongoingWork,
   type Job,
 } from "./model.ts";
 
@@ -23,6 +25,18 @@ test("menu bar deep links select only supported work filters", () => {
   assert.equal(filterFromSearch("?filter=done"), "done");
   assert.equal(filterFromSearch("?filter=unexpected"), "all");
   assert.equal(filterFromSearch(""), "all");
+});
+
+test("the status view shows current work and only actual input requests", () => {
+  const question = job({ id: "question", status: "blocked", display: { kind: "needs_input", label: "Dot needs your input", detail: "Which account should receive the export?", attention: true, completed: false } });
+  const repair = job({ id: "repair", status: "done", test_result: "failed", display: { kind: "needs_dot", label: "Tests failed", detail: "Dot can fix this", attention: true, completed: false } });
+  const old = { ...question, id: "old", current_id: "question" };
+  const jobs = [job({ id: "running" }), question, repair, old, job({ id: "done", status: "done" }), job({ id: "stopped", status: "cancelled" })];
+  assert.deepEqual(currentWork(jobs).filter(needsYou).map(j => j.id), ["question"]);
+  assert.deepEqual(ongoingWork(jobs).map(j => j.id), ["running", "repair"]);
+  assert.equal(needsYou({ ...question, attention_dismissed: true }), false);
+  assert.equal(needsYou({ ...question, resolved_by: "later" }), false);
+  assert.equal(jobs.length, 6);
 });
 
 test("finished tasks with failed tests still need attention", () => {

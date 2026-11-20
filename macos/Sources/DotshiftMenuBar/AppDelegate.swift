@@ -179,31 +179,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
     }
 
     private func rebuildMenu() {
-        let attention = snapshot?.attention.count ?? 0
-        let state = busy ?? (errorMessage != nil ? "Unavailable" : configuration == nil ? "Choose configuration" : snapshot == nil ? "Connecting…" : snapshot!.running ? snapshot!.readiness?.label ?? "Checking local access…" : "Stopped")
-        let needsAttention = attention > 0 || errorMessage != nil || snapshot?.readiness?.needsAttention == true
+        let inputCount = snapshot?.needsYou.count ?? 0
+        let state = busy ?? (errorMessage != nil ? "Connection unavailable" : configuration == nil ? "Set up Dotshift" : snapshot == nil ? "Checking connection…" : snapshot!.running ? snapshot!.readiness?.label ?? "Checking local access…" : "Dotshift is stopped")
+        let needsAttention = inputCount > 0 || errorMessage != nil || snapshot?.readiness?.needsAttention == true
         statusItem.button?.image = MenuBarIcon.image(attention: needsAttention)
         attentionDot.isHidden = !needsAttention
         attentionDot.needsDisplay = true
-        statusItem.button?.toolTip = "dotshift · \(state)\n\(snapshot?.active.count ?? 0) active · \(attention) need attention"
-        statusItem.button?.setAccessibilityLabel("dotshift, \(state), \(attention) need attention")
+        let activity = snapshot?.ongoing.first.map { "\($0.title) · \($0.activity)" } ?? "Nothing running"
+        statusItem.button?.toolTip = "dotshift · \(state)\n\(activity)"
+        statusItem.button?.setAccessibilityLabel("dotshift, \(state), \(inputCount) need your input")
         guard !menuOpen else { return }
         menu.removeAllItems()
-        let title = item("dotshift · \(state)")
+        let title = item(state, action: #selector(showReadiness), enabled: configuration != nil)
         title.attributedTitle = NSAttributedString(string: title.title, attributes: [.font: NSFont.boldSystemFont(ofSize: 13)])
         menu.addItem(title)
-        menu.addItem(item(snapshot?.running == true ? "\(snapshot!.active.count) active · \(attention) need attention" : "Background work runs independently"))
-        if errorMessage != nil { menu.addItem(item("Show Connection Error…", action: #selector(showLastError))) }
-        menu.addItem(.separator())
         let usable = configuration != nil && busy == nil
-        menu.addItem(item("Open Local Work…", action: #selector(openRoute), value: "/", enabled: usable, key: "o"))
+        if configuration == nil {
+            menu.addItem(item("Choose Configuration…", action: #selector(chooseConfiguration)))
+        } else if snapshot?.running == false {
+            menu.addItem(item("Start Dotshift", action: #selector(startService), enabled: usable))
+        } else if errorMessage != nil {
+            menu.addItem(item("Show Connection Issue…", action: #selector(showLastError)))
+        } else if snapshot?.readiness?.needsAttention == true {
+            menu.addItem(item("See What Is Needed…", action: #selector(showReadiness)))
+        }
+        if snapshot?.running == true {
+            if let work = snapshot?.needsYou, !work.isEmpty {
+                addWorkSection("Needs you", work: work)
+            }
+            if let work = snapshot?.ongoing, !work.isEmpty {
+                addWorkSection("Current work", work: work)
+            } else if inputCount == 0 {
+                menu.addItem(item("Nothing running. Ask Dot for a change."))
+            }
+            if inputCount == 0 { menu.addItem(item("No work needs your input.")) }
+        }
         menu.addItem(.separator())
-        addWorkMenu("Needs Attention (\(attention))", work: snapshot?.attention ?? [], empty: "Nothing needs attention", filter: "attention")
-        addWorkMenu("Active Work (\(snapshot?.active.count ?? 0))", work: snapshot?.active ?? [], empty: "No active work", filter: "active")
-        addWorkMenu("Recent Completions", work: snapshot?.completed ?? [], empty: "No completed work", filter: "done")
-        menu.addItem(.separator())
+        let troubleshooting = NSMenu()
+        troubleshooting.addItem(item("History and Details…", action: #selector(openRoute), value: "/history", enabled: usable))
+        troubleshooting.addItem(.separator())
         let connectionsMenu = NSMenu()
-        if connections.isEmpty { connectionsMenu.addItem(item(connectionError == nil ? "Checking connections…" : "Could not check connections", action: connectionError == nil ? nil : #selector(showConnectionError))) }
+        if connections.isEmpty { connectionsMenu.addItem(item(connectionError == nil ? "Checking connection…" : "Could not check connection", action: connectionError == nil ? nil : #selector(showConnectionError))) }
         for connection in connections {
             let entry = item("\(connection.name) · \(connection.status)", action: #selector(showConnection), value: connection)
             entry.toolTip = connection.detail
@@ -211,15 +227,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         }
         if let checked = connectionsDate { connectionsMenu.addItem(item("Checked \(checked.formatted(date: .omitted, time: .shortened))")) }
         connectionsMenu.addItem(.separator())
-        connectionsMenu.addItem(item(checkingConnections ? "Refreshing…" : "Refresh Connections", action: #selector(checkConnections), enabled: configuration != nil && !checkingConnections))
-        addSubmenu("Connections", connectionsMenu)
-        let service = NSMenu()
-        service.addItem(item("Start Service", action: #selector(startService), enabled: usable && snapshot?.running != true))
-        service.addItem(item("Stop Service", action: #selector(stopService), enabled: usable && snapshot?.running == true))
-        service.addItem(item("Restart Service", action: #selector(restartService), enabled: usable))
-        service.addItem(.separator())
-        service.addItem(item("View Service Log…", action: #selector(openLog), enabled: configuration != nil))
-        addSubmenu("Service", service)
+        connectionsMenu.addItem(item(checkingConnections ? "Checking…" : "Check Again", action: #selector(checkConnections), enabled: configuration != nil && !checkingConnections))
+        addSubmenu("Connection Details", connectionsMenu, to: troubleshooting)
+        troubleshooting.addItem(item("View Service Log…", action: #selector(openLog), enabled: configuration != nil))
+        troubleshooting.addItem(.separator())
+        troubleshooting.addItem(item("Start Service", action: #selector(startService), enabled: usable && snapshot?.running != true))
+        troubleshooting.addItem(item("Stop Service", action: #selector(stopService), enabled: usable && snapshot?.running == true))
+        troubleshooting.addItem(item("Restart Service", action: #selector(restartService), enabled: usable))
+        addSubmenu("Troubleshooting", troubleshooting)
         menu.addItem(item("Settings…", action: #selector(showSettings), key: ","))
         menu.addItem(.separator())
         let quit = item("Quit Menu Bar App", action: #selector(quitApp), key: "q")
@@ -227,25 +242,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         menu.addItem(quit)
     }
 
-    private func addSubmenu(_ title: String, _ submenu: NSMenu) {
+    private func short(_ text: String, limit: Int = 62) -> String {
+        let line = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        return line.count > limit ? String(line.prefix(limit - 1)) + "…" : line
+    }
+
+    private func addWorkSection(_ title: String, work: [WorkItem]) {
+        menu.addItem(.separator())
+        menu.addItem(item(title))
+        for task in work.prefix(3) { addWork(task, to: menu) }
+        if work.count > 3 {
+            let more = NSMenu()
+            for task in work.dropFirst(3) { addWork(task, to: more) }
+            addSubmenu("More current work (\(work.count - 3))", more)
+        }
+    }
+
+    private func addWork(_ task: WorkItem, to target: NSMenu) {
+        let entry = item(short(task.title), action: #selector(showWork), value: task)
+        entry.toolTip = "\(task.title)\n\(task.repo)\n\(task.display?.detail ?? task.activity)"
+        target.addItem(entry)
+        let detail = item(short(task.needsUserInput ? task.display?.detail ?? "Continue with Dot to answer." : task.activity), action: task.needsUserInput ? #selector(showWork) : nil, value: task)
+        detail.indentationLevel = 1
+        target.addItem(detail)
+        if task.isActive {
+            let stop = item("Stop Work", action: #selector(stopWork), value: task, enabled: busy == nil)
+            stop.toolTip = "Stop this request and save its progress. Ask Dot to continue later."
+            stop.indentationLevel = 1
+            target.addItem(stop)
+        }
+    }
+
+    private func addSubmenu(_ title: String, _ submenu: NSMenu, to parent: NSMenu? = nil) {
         submenu.autoenablesItems = false
         let entry = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         entry.submenu = submenu
         entry.isEnabled = true
-        menu.addItem(entry)
+        (parent ?? menu).addItem(entry)
     }
 
-    private func addWorkMenu(_ title: String, work: [WorkItem], empty: String, filter: String) {
-        let submenu = NSMenu()
-        if work.isEmpty { submenu.addItem(item(snapshot?.running == true ? empty : "Connect to the service to see work")) }
-        for task in work.prefix(5) {
-            let entry = item(task.menuTitle, action: #selector(openRoute), value: task.route, enabled: busy == nil)
-            entry.toolTip = "\(task.repo)\n\(task.title)\n\(task.phase)"
-            submenu.addItem(entry)
+    @objc private func showReadiness(_ sender: Any?) {
+        if let errorMessage { showError(MenuBarError(errorMessage)); return }
+        if snapshot?.running == false {
+            alert("Dotshift is stopped", "Choose Start Dotshift from the menu. Your saved work stays on this computer.")
+            return
         }
-        submenu.addItem(.separator())
-        submenu.addItem(item("View All…", action: #selector(openRoute), value: "/?filter=\(filter)", enabled: configuration != nil && busy == nil))
-        addSubmenu(title, submenu)
+        alert(snapshot?.readiness?.label ?? "Dotshift", snapshot?.readiness?.detail ?? "Dotshift is checking whether Dot can work on this computer.")
+    }
+
+    @objc private func showWork(_ sender: NSMenuItem) {
+        guard let work = sender.representedObject as? WorkItem else { return }
+        let next = work.needsUserInput ? "\n\nAnswer in your conversation with Dot." : ""
+        NSApp.activate(ignoringOtherApps: true)
+        let dialog = NSAlert()
+        dialog.messageText = work.title
+        dialog.informativeText = "\(work.activity)\n\n\(work.display?.detail ?? "Progress is saved on this computer.")\(next)"
+        dialog.addButton(withTitle: "Done")
+        dialog.addButton(withTitle: "History and Details…")
+        if dialog.runModal() == .alertSecondButtonReturn { perform(["ui", "-path", work.route], label: "Opening…") }
+    }
+
+    @objc private func stopWork(_ sender: NSMenuItem) {
+        guard let work = sender.representedObject as? WorkItem, work.isActive, busy == nil else { return }
+        perform(["cancel", work.id], label: "Stopping work…", timeout: 110)
     }
 
     @objc private func openRoute(_ sender: NSMenuItem) {
@@ -303,7 +362,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
             stack.addArrangedSubview(title)
             loginButton = NSButton(checkboxWithTitle: "Launch menu bar app at login", target: self, action: #selector(toggleLogin))
             completionButton = NSButton(checkboxWithTitle: "Notify when work completes", target: self, action: #selector(toggleNotifications))
-            attentionButton = NSButton(checkboxWithTitle: "Notify when work needs attention", target: self, action: #selector(toggleNotifications))
+            attentionButton = NSButton(checkboxWithTitle: "Notify when Dot needs my input", target: self, action: #selector(toggleNotifications))
             completionButton?.identifier = NSUserInterfaceItemIdentifier("notifyCompleted")
             attentionButton?.identifier = NSUserInterfaceItemIdentifier("notifyAttention")
             for button in [loginButton!, completionButton!, attentionButton!] { stack.addArrangedSubview(button) }
@@ -312,7 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
             stack.addArrangedSubview(configurationLabel!)
             let buttons = NSStackView(views: [NSButton(title: "Choose Configuration…", target: self, action: #selector(chooseConfiguration)), NSButton(title: "Open Configuration…", target: self, action: #selector(openConfiguration))])
             buttons.spacing = 8; stack.addArrangedSubview(buttons)
-            let note = NSTextField(wrappingLabelWithString: "Quitting the menu bar app leaves background work running. Use Service → Stop Service to stop it explicitly.")
+            let note = NSTextField(wrappingLabelWithString: "Quitting the menu bar app leaves background work running. Use Troubleshooting → Stop Service to stop it explicitly.")
             note.font = .systemFont(ofSize: 12); note.textColor = .secondaryLabelColor
             stack.addArrangedSubview(note)
             window.contentView!.addSubview(stack)
@@ -382,8 +441,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         let key = event.kind == .completed ? "notifyCompleted" : "notifyAttention"
         guard defaults.bool(forKey: key), let configuration else { return }
         let content = UNMutableNotificationContent()
-        content.title = "\(event.work.phase) · \(event.work.repo)"
-        content.body = event.work.title
+        content.title = event.kind == .attention ? "Dot needs your input" : event.work.phase
+        content.body = event.kind == .attention ? "\(event.work.title): \(event.work.display?.detail ?? "Continue with Dot to answer.")" : event.work.title
         content.sound = .default
         content.userInfo = ["route": event.work.route, "config": configuration.config]
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: event.work.id + key, content: content, trigger: nil))
@@ -395,7 +454,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         let info = response.notification.request.content.userInfo
         Task { @MainActor in
             if let config = info["config"] as? String, config == configuration?.config, let route = info["route"] as? String {
-                perform(["ui", "-path", route], label: "Opening…")
+                if let work = snapshot?.currentWork.first(where: { $0.route == route }) {
+                    let entry = item(work.title, value: work)
+                    showWork(entry)
+                } else { showReadiness(nil) }
             }
             completionHandler()
         }

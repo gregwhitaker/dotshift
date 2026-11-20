@@ -305,7 +305,7 @@ func newHandler(o Options, record Record) http.Handler {
 	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/")
-		if name == "" || name == "models" || strings.HasPrefix(name, "goals/") {
+		if name == "" || name == "history" || name == "models" || strings.HasPrefix(name, "goals/") {
 			name = "index.html"
 		}
 		if !fs.ValidPath(name) {

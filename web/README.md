@@ -1,9 +1,10 @@
 # Local work monitor
 
-An optional React/TypeScript view of Dot's local work, embedded in the Go
-binary. The overview shows work in progress, issues, and results. Repository
-names are context on each job. Logs and technical details are collapsed.
-There is no project sidebar, model dashboard, or iteration-management form.
+The menu bar app is the primary interface on macOS. This optional
+React/TypeScript browser client is embedded in the Go binary. `/` shows current
+readiness, work in progress, and specific user input. Routine failures remain
+visible as waiting for Dot, without becoming personal alerts. Completed, stopped,
+and historical requests appear only in `/history`, reached through Troubleshooting.
 
 Each row represents one user request. Explicitly linked follow-ups share a
 short title and expandable history; unrelated requests are never grouped just
@@ -53,7 +54,8 @@ drift between the brand masters, dashboard, and marketing copies.
 24+; installed dotshift needs neither Node nor a frontend server. `dist/` is
 generated and tracked for Go embedding. Rebuild Go after changing the assets.
 
-Open with `dotshift ui -config FILE`. For isolated UI checks use a subscription
+Open history explicitly with `dotshift ui -path /history -config FILE`.
+On macOS, plain `dotshift ui` opens the menu app. For isolated UI checks use a subscription
 config with `repos: {}` and `mcp.disabled: true`, then stop that config's service
 with `dotshift stop -config FILE`. Use a local fake agent for job-action QA.
 Never put service tokens in frontend source, local storage, or query strings.

@@ -6,6 +6,8 @@ import {
   attention,
   badgeClass,
   currentWork,
+  needsYou,
+  ongoingWork,
   cleanLog,
   elapsed,
   filterFromSearch,
@@ -120,7 +122,7 @@ function StartHelp({ onClose, readiness, checking, error, connected, onCheck }: 
       <section className="readiness-panel" aria-label="Connection readiness">
         <div className="readiness-heading"><h3>{!connected ? "Local service unavailable" : checking ? "Checking local access…" : error ? "Connection check needed" : readiness?.label || "Connection not checked"}</h3>
           <button className="secondary" disabled={checking || !connected} onClick={onCheck}>{checking ? "Checking…" : "Check again"}</button></div>
-        <p>{!connected ? "Reopen Local Work from the Dotshift menu to reconnect. Your saved work stays on this computer." : error || readiness?.detail || "Checking the workspace, coding access, and Dot connection."}</p>
+        <p>{!connected ? "Open Dotshift in the menu bar to check the connection. Your saved work stays on this computer." : error || readiness?.detail || "Checking the workspace, coding access, and Dot connection."}</p>
         {connected && readiness && !error && <>
           <ul className="readiness-checks">{readiness.checks.map(check => <li key={check.name}>
             <Icon name={check.state === "ready" ? "check" : check.state === "attention" ? "alert" : "clock"} size={16} />
@@ -168,6 +170,7 @@ function MessageForDot({ message }: { message: string }) {
 
 function App() {
   const [id, setID] = useState(currentID);
+  const [historyView, setHistoryView] = useState(() => location.pathname === "/history" || new URLSearchParams(location.search).has("filter"));
   const [jobs, setJobs] = useState<Job[]>([]);
   const [info, setInfo] = useState<Info | null>(null);
   const [error, setError] = useState("");
@@ -202,8 +205,8 @@ function App() {
     () => localStorage.getItem("dotshift-theme") || "light",
   );
   useEffect(() => {
-    if (!id) document.title = "dotshift · Local work";
-  }, [id]);
+    if (!id) document.title = historyView ? "dotshift · History" : "dotshift · Status";
+  }, [id, historyView]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("dotshift-theme", theme);
@@ -230,7 +233,7 @@ function App() {
           setError(
             e instanceof APIError
               ? e.message
-              : "The local service is unavailable. Reopen Local Work from the Dotshift menu to reconnect.",
+              : "The local service is unavailable. Open Dotshift in the menu bar to check the connection.",
           );
         }
       }
@@ -252,15 +255,18 @@ function App() {
   useEffect(() => {
     const listener = () => {
       setID(currentID());
+      setHistoryView(location.pathname === "/history" || new URLSearchParams(location.search).has("filter"));
       setFilter(filterFromSearch(location.search));
     };
     window.addEventListener("popstate", listener);
     return () => window.removeEventListener("popstate", listener);
   }, []);
   function navigate(next: string) {
-    const query = filter === "all" ? "" : `?filter=${filter}`;
-    history.pushState(null, "", next ? jobPath(next) + query : "/" + query);
-    setID(next);
+    const showHistory = next === "/history";
+    const query = showHistory && filter !== "all" ? `?filter=${filter}` : "";
+    history.pushState(null, "", showHistory ? "/history" + query : next ? jobPath(next) : "/");
+    setID(showHistory ? "" : next);
+    setHistoryView(showHistory);
     window.scrollTo(0, 0);
   }
   return (
@@ -306,7 +312,7 @@ function App() {
             </h2>
             <p>
               {error
-                ? "Choose Open Local Work in the Dotshift menu, or run dotshift ui, to reopen this monitor."
+                ? "Open Dotshift from the menu bar, or run dotshift ui, to check the connection."
                 : "Loading your local work."}
             </p>
           </div>
@@ -317,9 +323,9 @@ function App() {
             connected={connected}
             jobs={jobs}
             navigate={navigate}
-            onBack={() => navigate("")}
+            onBack={() => navigate("/history")}
           />
-        ) : (
+        ) : historyView ? (
           <Overview
             jobs={jobs}
             filter={filter}
@@ -328,6 +334,9 @@ function App() {
             onHelp={() => setHelp(true)}
             ready={info?.readiness?.state === "ready"}
           />
+        ) : (
+          <StatusOverview jobs={jobs} readiness={info?.readiness} connected={connected}
+            navigate={navigate} onHelp={() => setHelp(true)} />
         )}
         <footer className="page-footer">
           <span>
@@ -343,6 +352,46 @@ function App() {
   );
 }
 
+function StatusOverview({ jobs, readiness, connected, navigate, onHelp }: {
+  jobs: Job[];
+  readiness?: Readiness | null;
+  connected: boolean;
+  navigate: (id: string) => void;
+  onHelp: () => void;
+}) {
+  const input = currentWork(jobs).filter(needsYou);
+  const work = ongoingWork(jobs);
+  return <div className="page status-overview">
+    <div className="page-heading"><div>
+      <div className="eyebrow">ON THIS COMPUTER</div>
+      <h1>{!connected ? "Connection unavailable" : readiness?.label || "Checking local access…"}</h1>
+      <p>{connected && readiness?.state === "ready" ? "Ask Dot for a change. Coding, tests, and review happen here." : "Open Dotshift in the menu bar to check the connection."}</p>
+    </div></div>
+    {input.length > 0 && <section className="status-section" aria-label="Needs you">
+      <h2>Needs you</h2>
+      {input.map(job => <article className="status-request needs-input" key={job.id}>
+        <h3>{workTitle(job)}</h3><p>{job.display?.detail || "Dot needs your input to continue."}</p>
+        <p className="status-hint">Answer in your conversation with Dot.</p>
+        <button className="text-button" onClick={() => navigate(job.id)}>Details</button>
+      </article>)}
+    </section>}
+    <section className="status-section" aria-label="Current work">
+      <h2>{work.length ? "Current work" : input.length ? "Work is waiting for your input." : "Nothing running."}</h2>
+      {work.map(job => <article className="status-request" key={job.id}>
+        <h3>{workTitle(job)}</h3>
+        <p>{active(job) ? statusLabel(job) : "Waiting for Dot to continue"}</p>
+        <button className="text-button" onClick={() => navigate(job.id)}>Details</button>
+      </article>)}
+      {input.length === 0 && <p className="status-hint">No work needs your input.</p>}
+    </section>
+    <p className="status-hint">Dotshift lives in your menu bar. Requests, results, and follow-ups stay with Dot.</p>
+    <details className="status-troubleshooting"><summary>Troubleshooting</summary>
+      <button className="secondary" onClick={() => navigate("/history")}>History and details</button>
+      <button className="text-button" onClick={onHelp}>Connection details</button>
+    </details>
+  </div>;
+}
+
 function Overview({ jobs, filter, setFilter, navigate, onHelp, ready }: {
   jobs: Job[];
   filter: Filter;
@@ -356,17 +405,14 @@ function Overview({ jobs, filter, setFilter, navigate, onHelp, ready }: {
   const requests = currentWork(jobs);
   const running = requests.filter(active).length;
   const needsAttention = requests.filter(attention).length;
-  const needsInput = requests.some(job => attention(job) && job.display?.kind === "needs_input");
   return (
     <div className="page overview">
+      <button className="back-link" onClick={() => navigate("")}><Icon name="back" size={16} /> Back to status</button>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">DOT’S LOCAL WORK</div>
-          <h1>{needsInput ? "Dot needs your input." : needsAttention ? "Dot has work to pick up." : running ? "Work is underway." : "Your local work."}</h1>
-          <p>{needsAttention ? "Open the request to see what is needed and continue with Dot. Your progress is saved."
-            : running
-            ? "Coding, tests, and review continue here. Follow up with Dot in your conversation."
-            : "Tell Dot what to build or change. Your computer takes it from there."}</p>
+          <div className="eyebrow">TROUBLESHOOTING</div>
+          <h1>History and details</h1>
+          <p>Saved requests, test results, and logs. Continue the work in your conversation with Dot.</p>
         </div>
       </div>
       <section className="work-section" aria-label="Local work">
@@ -376,7 +422,7 @@ function Overview({ jobs, filter, setFilter, navigate, onHelp, ready }: {
               <button key={item.key} aria-pressed={filter === item.key}
                 className={filter === item.key ? "current" : ""} onClick={() => {
                   setFilter(item.key);
-                  history.replaceState(null, "", item.key === "all" ? "/" : `/?filter=${item.key}`);
+                  history.replaceState(null, "", item.key === "all" ? "/history" : `/history?filter=${item.key}`);
                 }}>
                 {item.label}
                 {item.key === "active" && running > 0 ? ` (${running})` : ""}
@@ -416,7 +462,7 @@ function Overview({ jobs, filter, setFilter, navigate, onHelp, ready }: {
             <div className="empty-icon"><Icon name={jobs.length ? "search" : "terminal"} size={28} /></div>
             <h3>{jobs.length ? "No work in this view" : ready ? "Your next idea starts with Dot." : "Connect once. Then ask Dot."}</h3>
             <p>{jobs.length ? "Choose another view or search to find your work." : ready ? "Ask Dot to change a local app or build something new. Progress and results will appear here." : "Check the connection, then tell Dot what to build. Dot handles the code, tests, and follow-ups."}</p>
-            {jobs.length ? <button className="secondary" onClick={() => { setQuery(""); setFilter("all"); }}>Show all work</button>
+            {jobs.length ? <button className="secondary" onClick={() => { setQuery(""); setFilter("all"); history.replaceState(null, "", "/history"); }}>Show all work</button>
               : <button className="secondary" onClick={onHelp}>{ready ? "How to work with Dot" : "Check connection"} <Icon name="arrow" size={16} /></button>}
           </div>
         )}
@@ -581,7 +627,7 @@ function GoalDetail({
     <div className="page detail">
       <button className="back-link" onClick={onBack}>
         <Icon name="back" size={16} />
-        Back to work
+        Back to history
       </button>
       <div className="detail-heading">
         <div>

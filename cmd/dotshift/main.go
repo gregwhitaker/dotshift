@@ -27,7 +27,7 @@ Usage:
   dotshift version                 show the version, source commit, and build date
   dotshift init     [-config FILE] [-workspace DIR] [-mode subscription|api]   authorize a workspace and write configuration
   dotshift serve    [-config FILE] [-local-only]   start the job runner, dashboard, and optional MCP intake
-  dotshift ui       [-config FILE] [-no-open] [-local-only]   start or reuse the service and open the local dashboard
+  dotshift ui       [-config FILE] [-no-open] [-local-only]   open the menu bar app on macOS; use -path /history for diagnostics
   dotshift menubar  [-config FILE] [-app PATH]   open the macOS menu bar app; quitting it keeps work running
   dotshift service  [-config FILE] install|uninstall   manage macOS login startup and crash recovery
   dotshift status   [-config FILE]   show the execution mode or API router status
@@ -297,7 +297,7 @@ func runStatus(ctx context.Context, path string) error {
 	if service, err := dashboard.Discover(ctx, dir, path); err != nil {
 		return err
 	} else if service != nil {
-		fmt.Printf("Dotshift is running. Dashboard: %s\nOpen an authenticated browser session with `dotshift ui`.\n", service.URL)
+		fmt.Printf("Dotshift is running. Local status: %s\nOpen Dotshift with `dotshift ui`, or browser diagnostics with `dotshift ui -path /history`.\n", service.URL)
 	}
 	cfg, r, err := prepare(path)
 	if err != nil {

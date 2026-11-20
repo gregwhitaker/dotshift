@@ -50,7 +50,7 @@ func (r Record) BrowserURL() string { return r.URL + "/#token=" + r.Token }
 func (r Record) BrowserRoute(route string) (string, error) {
 	u, err := url.Parse(route)
 	if err != nil || u.IsAbs() || u.Host != "" || u.User != nil || u.Fragment != "" || !strings.HasPrefix(route, "/") || strings.HasPrefix(route, "//") || strings.ContainsAny(route, "\\\r\n") {
-		return "", errors.New("monitor path must be a local path such as /models or /goals/ID")
+		return "", errors.New("monitor path must be a local path such as /history or /goals/ID")
 	}
 	return r.URL + u.String() + "#token=" + r.Token, nil
 }

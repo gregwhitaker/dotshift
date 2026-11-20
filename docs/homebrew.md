@@ -51,10 +51,11 @@ Then run `dotshift connect -config ~/.config/dotshift/dotshift.yaml` for the
 connection URL and authorization instructions. Local-only work can use
 `dotshift ui -local-only -config ~/.config/dotshift/dotshift.yaml` without a tunnel.
 
-On macOS, open the included menu app and optionally install login startup:
+`dotshift ui` opens the included menu app on macOS and browser status on Linux.
+History and logs are under **Troubleshooting**. On macOS, optionally install
+service login startup:
 
 ```sh
-dotshift menubar -config ~/.config/dotshift/dotshift.yaml
 dotshift service -config ~/.config/dotshift/dotshift.yaml install
 ```
 

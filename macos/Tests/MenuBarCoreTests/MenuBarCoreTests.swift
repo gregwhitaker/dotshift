@@ -47,7 +47,7 @@ final class MenuBarCoreTests: XCTestCase {
         let restored = try snapshot(issues)
         XCTAssertEqual(restored.attention.count, 4)
         let events = tracker.changes(in: restored)
-        XCTAssertEqual(events.count, 4)
+        XCTAssertEqual(events.map(\.work.id), ["input"])
         XCTAssertTrue(events.allSatisfy { $0.kind == .attention })
     }
 
@@ -60,8 +60,7 @@ final class MenuBarCoreTests: XCTestCase {
         XCTAssertEqual(event[0].kind, .completed)
         XCTAssertTrue(tracker.changes(in: completed).isEmpty)
         let failedTests = tracker.changes(in: try snapshot([job(status: "done", test: "failed")]))
-        XCTAssertEqual(failedTests.count, 1)
-        XCTAssertEqual(failedTests[0].kind, .attention)
+        XCTAssertTrue(failedTests.isEmpty, "routine test failures belong to Dot, not personal notifications")
         XCTAssertTrue(tracker.changes(in: try snapshot([], running: false)).isEmpty)
         XCTAssertTrue(tracker.changes(in: completed).isEmpty)
     }
@@ -109,6 +108,37 @@ final class MenuBarCoreTests: XCTestCase {
             XCTAssertEqual(snapshot.readiness?.needsAttention, state == "attention")
             XCTAssertTrue(snapshot.attention.isEmpty, "setup status must not turn saved requests into failures")
         }
+    }
+
+    func testMenuSeparatesCurrentWorkFromPersonalInputAndHistory() throws {
+        var question = job("question", status: "blocked")
+        question["display"] = ["kind": "needs_input", "label": "Dot needs your input", "detail": "Which account should receive the export?", "attention": true, "completed": false]
+        var repair = job("repair", status: "done", test: "failed")
+        repair["display"] = ["kind": "needs_dot", "label": "Tests failed", "detail": "Dot can fix the tests", "attention": true, "completed": false]
+        var old = question
+        old["id"] = "old"
+        old["current_id"] = "question"
+        let state = try snapshot([job(), question, repair, old, job("done", status: "done"), job("stopped", status: "cancelled")])
+        XCTAssertEqual(state.needsYou.map(\.id), ["question"])
+        XCTAssertEqual(state.ongoing.map(\.id), ["one", "repair"])
+        XCTAssertEqual(state.ongoing.last?.activity, "Waiting for Dot to continue")
+        XCTAssertEqual(state.jobs.count, 6, "history remains intact")
+    }
+
+    func testPersonalNotificationsTrackActualQuestionsWithoutRepeatingHistory() throws {
+        var question = job("question", status: "blocked")
+        func display(_ detail: String) -> [String: Any] {
+            ["kind": "needs_input", "label": "Dot needs your input", "detail": detail, "attention": true, "completed": false]
+        }
+        var tracker = NotificationTracker()
+        XCTAssertTrue(tracker.changes(in: try snapshot([job()])).isEmpty)
+        question["display"] = display("Which account should receive the export?")
+        XCTAssertEqual(tracker.changes(in: try snapshot([question])).map(\.kind), [.attention])
+        XCTAssertTrue(tracker.changes(in: try snapshot([question])).isEmpty)
+        question["display"] = display("May I use the shared account?")
+        XCTAssertEqual(tracker.changes(in: try snapshot([question])).count, 1)
+        tracker.reset()
+        XCTAssertTrue(tracker.changes(in: try snapshot([question])).isEmpty)
     }
 
     func testCommandRunnerDrainsLargeResponsesAndPreservesArguments() async throws {

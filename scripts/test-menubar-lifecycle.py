@@ -43,13 +43,13 @@ def wait_for(predicate, timeout=25):
     raise AssertionError("Timed out waiting for the lifecycle test condition")
 
 
-def quit_app(identifier):
+def quit_app(identifier, required=False):
     # NSRunningApplication.terminate sends the normal macOS Quit event. This
     # exercises applicationShouldTerminate, not SIGKILL or a simulated teardown.
     script = """
 import AppKit
 let apps = NSRunningApplication.runningApplications(withBundleIdentifier: CommandLine.arguments[1])
-guard let app = apps.first else { exit(0) }
+guard let app = apps.first else { exit(CommandLine.arguments[2] == "required" ? 4 : 0) }
 guard app.terminate() else { exit(2) }
 let deadline = Date().addingTimeInterval(10)
 while !app.isTerminated && Date() < deadline {
@@ -57,7 +57,7 @@ while !app.isTerminated && Date() < deadline {
 }
 exit(app.isTerminated ? 0 : 3)
 """
-    run("/usr/bin/swift", "-e", script, identifier)
+    run("/usr/bin/swift", "-e", script, identifier, "required" if required else "optional")
 
 
 def submit_goal(client, base_url, passcode):
@@ -133,7 +133,7 @@ def main():
     identifier = "com.dotshift.menubar.test." + uuid.uuid4().hex
     with tempfile.TemporaryDirectory(prefix="dotshift-menubar-") as temporary:
         directory = Path(temporary).resolve()
-        app = directory / "Dotshift Lifecycle.app"
+        app = directory / "Dotshift.app"
         shutil.copytree(APP, app)
         plist = app / "Contents/Info.plist"
         info = plistlib.loads(plist.read_bytes())
@@ -206,7 +206,9 @@ mcp:
         receipt = directory / ".dotshift/service.json"
         service = None
         try:
-            run(str(cli), "menubar", "-config", str(config), "-app", str(app), cwd=directory)
+            # The ordinary UI command must open the native app on macOS;
+            # explicit -path is reserved for browser diagnostics.
+            run(str(cli), "ui", "-config", str(config), cwd=directory)
             wait_for(receipt.exists)
             service = json.loads(receipt.read_text())
             client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -222,7 +224,7 @@ mcp:
             job_id = submit_goal(client, mcp_url, (directory / ".dotshift/mcp_passcode").read_text().strip())
             wait_for(started.exists)
             assert request("/jobs/" + job_id)["status"] == "running"
-            quit_app(identifier)
+            quit_app(identifier, required=True)
             after = json.loads(receipt.read_text())
             assert after["pid"] == service["pid"] and after["instance"] == service["instance"], "Quit replaced or stopped the service"
             assert request("/jobs/" + job_id)["status"] == "running", "Quit interrupted active work"
@@ -230,7 +232,7 @@ mcp:
             result = wait_for(lambda: (data if (data := request("/jobs/" + job_id))["status"] in ("done", "failed", "blocked") else None))
             assert result["status"] == "done" and result["test_result"] == "passed", result.get("error")
             assert result["goal"]["reviewer_selection"], "Goal did not complete independent review"
-            print("PASS: native Quit left the same service and active goal running; the goal then passed tests and review.")
+            print("PASS: ui opened the menu app; native Quit left the same service and active goal running; the goal then passed tests and review.")
         finally:
             gate.touch()
             try:

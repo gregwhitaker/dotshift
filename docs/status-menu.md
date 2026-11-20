@@ -1,13 +1,15 @@
-# Optional macOS status menu
+# macOS menu bar app
 
-This optional status client is separate from the background coding service.
-The service does not depend on the menu app.
+The menu bar app is Dotshift’s main interface on macOS. It shows whether Dot can
+work on this computer, what is happening now, and any input needed from you.
+Requests and follow-ups stay in your conversation with Dot. The background
+coding service runs independently of the menu app.
 
 Install with [Homebrew](homebrew.md), then open the included menu app using
 the configuration created during setup:
 
 ```sh
-dotshift menubar -config ~/.config/dotshift/dotshift.yaml
+dotshift ui -config ~/.config/dotshift/dotshift.yaml
 ```
 
 Homebrew installs the app at `$(brew --prefix dotshift)/Dotshift.app`, with its
@@ -26,34 +28,37 @@ keep the same shape and width, so neighboring menu items stay in place. The
 app bundle uses the Ink-and-blue Offset app icon. Update and relaunch the menu
 app to load updated branding.
 
-The menu shows the service state and counts of current requests and requests needing
-attention. Linked follow-ups share one request; earlier attempts remain in the
-monitor's expandable history. The menu uses the monitor's outcome labels,
-including **Ready to apply**, **Applied locally**, and **Not applied**.
-**Open Local Work** opens the work monitor. Start new work, choose
-optional model preferences, and handle follow-ups by asking Dot. Work submenus show up to five tasks with their current phase;
-select one to open its details, or use **View All** for a filtered list.
+The menu opens with the shared readiness status. Click it for the explanation.
+**Current work** shows the request and its coding, testing, review, or automatic
+retry state directly in the menu. **Stop Work** saves progress; Dot can resume it
+later. A stopped request requiring routine repair is labeled **Waiting for Dot to
+continue**, rather than suggesting that it is still running.
 
-When a later linked result passes validation, superseded failures move into
-history automatically. Unrelated successes and cancelled follow-ups do not
-resolve an earlier failure. To acknowledge a remaining issue manually, open
-**Technical details** and click **Dismiss this notice**. The count and blue dot update on
-the next refresh. The request keeps its status, files, and history;
-**Show this notice again** restores it. Resuming can produce a new
-issue that needs attention again. Dismissing work does not clear a service
-connection error or turn a failed test result into a successful completion.
+**Needs you** appears only for a specific question, missing access, or a decision
+about an existing limit. It shows the actual request; click to read the full
+explanation, then answer in your conversation with Dot. Routine test failures and
+review fixes do not trigger personal notifications or the blue attention dot.
+When idle, the menu says nothing is running and there is no work requiring input.
+It does not list completed requests or old test runs.
 
-**Connections** shares the browser's readiness check: the authorized workspace,
-configured coding and review access (including usable fallback and recorded limits),
-and the Dot connection. The menu title reflects this checked status. Public endpoint
-health alone does not confirm Dot access; recent authenticated contact is also
-required and its time is available in connection details. These checks make no
-model requests and do not estimate remaining subscription allowance. Work
-refreshes every five seconds; connection checks refresh every minute and can
-also be requested manually. Checks never restart work or change sign-ins. **Service** provides explicit start, stop, restart,
-and log actions. Stopping saves active goals for the next service start.
+**Troubleshooting** contains history, connection details, service logs, and explicit
+service start/stop/restart actions. **History and Details** opens the optional
+browser archive at `/history`; individual results keep their tests, diffs, logs,
+and linked follow-ups. Existing records are preserved. The browser’s default page
+is a small status view, with the archive behind Troubleshooting.
 
-**Settings** contains login startup, completion and attention notifications,
+Connection details check the authorized workspace, configured coding and review
+access, and Dot’s authenticated contact with this service. Public endpoint health
+alone does not confirm Dot access. Checks make no model requests and do not
+estimate remaining subscription allowance. Work refreshes every five seconds;
+connection checks refresh every minute and can be requested with **Check Again**.
+Checks never restart work or change sign-ins.
+
+`dotshift ui` opens the menu app on macOS. `dotshift ui -path /history` explicitly
+opens the browser archive; `-path /` opens browser status. `-no-open` starts or
+reuses the service without opening either interface. Linux uses browser status.
+
+**Settings** contains login startup, completion and personal-input notifications,
 and configuration selection. Notifications are opt-in, require macOS permission,
 and report new changes while the menu app is running. Launch at login starts
 the menu app and reconnects to or starts the service; it is independent of
@@ -61,7 +66,7 @@ the menu app and reconnects to or starts the service; it is independent of
 
 **Quit Menu Bar App only quits the menu app.** It never stops the service,
 cancels tasks, or removes service startup. Closing Settings also leaves work
-running. Use **Service → Stop Service** or `dotshift stop` to stop explicitly.
+running. Use **Troubleshooting → Stop Service** or `dotshift stop` to stop explicitly.
 
 ## Build and test from source
 

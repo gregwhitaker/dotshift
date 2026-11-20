@@ -79,6 +79,11 @@ export const attention = (job: Job) =>
   (job.display?.attention ?? (["blocked", "failed", "waiting_input"].includes(job.status) ||
     (job.status === "done" && job.test_result === "failed")));
 export const currentWork = (jobs: Job[]) => jobs.filter(job => !job.current_id || job.current_id === job.id);
+// Only a specific input/access request belongs in the user's attention list.
+// Routine failures remain visible as work waiting for Dot, without an alert.
+export const needsYou = (job: Job) => attention(job) &&
+  (job.display?.kind === "needs_input" || (!job.display && job.status === "waiting_input"));
+export const ongoingWork = (jobs: Job[]) => currentWork(jobs).filter(job => active(job) || (attention(job) && !needsYou(job)));
 export const completed = (job: Job) => job.display?.completed ?? (job.status === "done" && job.test_result !== "failed");
 export const resumable = (job: Job) =>
   !!job.goal && ["blocked", "cancelled", "failed"].includes(job.status);

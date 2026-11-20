@@ -1954,3 +1954,13 @@ dialog > p {
   .monitor .assessment { padding: 18px; }
   .monitor .connection-error { margin: 16px 24px 0; flex-wrap: wrap; }
 }
+:root .status-overview { max-width: 760px; }
+.status-section { margin: 28px 0; }
+.status-section h2 { font-size: 18px; margin-bottom: 14px; }
+.status-request { padding: 18px 0; border-bottom: 1px solid var(--line); }
+.status-request h3 { font-size: 16px; margin: 0 0 8px; }
+.status-request p { line-height: 1.6; margin: 6px 0; }
+.status-hint { color: var(--muted); line-height: 1.6; }
+.status-troubleshooting { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--line); }
+.status-troubleshooting summary { cursor: pointer; color: var(--muted); margin-bottom: 12px; }
+.status-troubleshooting button + button { margin-left: 16px; }

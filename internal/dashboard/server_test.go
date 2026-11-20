@@ -224,7 +224,7 @@ func TestLogTailAndEmbeddedRoutes(t *testing.T) {
 	if !out.Truncated || len(out.Output) > 64*1024 || !strings.HasSuffix(out.Output, "latest output") {
 		t.Fatal("log tail lost newest output or exceeded its limit")
 	}
-	for _, path := range []string{"/", "/models", "/goals/goal-1"} {
+	for _, path := range []string{"/", "/history", "/history?filter=attention", "/models", "/goals/goal-1"} {
 		w = request(h, r, "GET", path, "", nil)
 		if w.Code != 200 || !strings.Contains(w.Body.String(), `id="root"`) {
 			t.Fatalf("embedded route %s: %d", path, w.Code)

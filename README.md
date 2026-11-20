@@ -16,8 +16,9 @@ ones there. Test commands are discovered from the code. OpenAI runs first by
 default, with Claude taking over after an observed usage limit. Work continues
 while Dot is disconnected and survives service restarts.
 
-The optional app shows progress and results. You do not need it to submit work,
-manage repositories, choose models, or keep the coding loop moving.
+On macOS, the menu bar app shows whether Dot is ready, what it is doing, and
+anything that needs your input. History and logs live under Troubleshooting.
+Keep requests, results, and follow-ups in your conversation with Dot.
 
 ## Set up local coding
 
@@ -65,13 +66,13 @@ workspace boundaries and custom validation.
 dotshift check -config ~/.config/dotshift/dotshift.yaml
 # macOS: start the service and open the menu app
 dotshift service -config ~/.config/dotshift/dotshift.yaml install
-dotshift menubar -config ~/.config/dotshift/dotshift.yaml
+dotshift ui -config ~/.config/dotshift/dotshift.yaml
 dotshift connect -config ~/.config/dotshift/dotshift.yaml
 ```
 
 `check` verifies CLI installation and sign-in without model calls. On macOS,
-`service install` starts the service now, at login, and after a crash; `menubar`
-opens the included status app. On Linux, start
+`service install` starts the service now, at login, and after a crash; `ui`
+opens the included menu bar app. On Linux, start
 `dotshift serve -config ~/.config/dotshift/dotshift.yaml` in the foreground or
 under your own service manager.
 
@@ -110,28 +111,27 @@ dotshift jobs -config ~/.config/dotshift/dotshift.yaml TASK_ID
 dotshift logs -config ~/.config/dotshift/dotshift.yaml TASK_ID
 ```
 
-The browser is an optional monitor: work in progress, issues, and completed
-results. Related follow-ups share one request and expandable history. Status
-distinguishes a tested result ready to apply from changes already applied locally.
-The readable result comes first; original instructions, tests, changes, and logs
-stay in expandable details. Stop or dismiss work here when needed.
-Ask Dot to start, continue, investigate, or apply work. Closing the browser or
-optional status menu leaves work running.
+The menu bar app is the main interface on macOS. It shows readiness and current
+work directly, with **Stop Work** available while a request runs. **Needs you** is
+reserved for a specific question, missing access, or a decision about a limit.
+Routine coding problems remain Dot’s work and do not generate personal alerts.
+Closing the menu app leaves coding running.
 
-The browser and menu share a checked readiness status for local workspace,
-coding/review access, and the Dot connection. Open **Connection and help** to
-check again or find first-connection instructions. A running service alone does
-not count as a confirmed Dot connection. These checks do not start coding or
-change access; Dot handles the work once connected.
+**Troubleshooting → History and Details** opens the browser archive. Related
+follow-ups share one request and expandable history. Results distinguish changes
+ready to apply from changes already applied locally; tests, diffs, and logs stay
+in expandable details. Nothing in history must be managed to start new work.
 
-Earlier failed checks move into history when a later linked result passes
-validation. To acknowledge a remaining issue manually, open **Technical details**
-and choose **Dismiss this notice**. It leaves the dashboard's Needs attention list and the menu bar's
-attention count, while keeping its status, branch, files, and history in
-request history. Use **Show this notice again** to undo. A new failure or blocker after
-resuming needs attention again. You can also use
-`dotshift dismiss -config ~/.config/dotshift/dotshift.yaml JOB_ID`, or add
-`-undo` to restore it.
+The browser and menu share readiness checks for workspace, coding/review access,
+and Dot’s authenticated connection. **Troubleshooting → Connection Details** lets
+you check again. Checks do not start coding or change access. A running service
+alone does not count as a confirmed Dot connection.
+
+For direct browser access, use `dotshift ui -path /history -config FILE`.
+`dotshift ui -path / -config FILE` shows current status. On Linux, `dotshift ui`
+opens browser status by default. `-no-open` starts or reuses the service without
+opening an interface. Old requests and technical notices remain in history;
+manual dismissal is available inside a request’s technical details.
 
 Tasks, goals, terminal runs, and follow-ups share the same coding, fallback,
 testing, and review loop. Review receives the actual diff, changed files, base
@@ -168,7 +168,7 @@ setup above; put flags before positional arguments such as job IDs.
 | `service install\|uninstall` | Manage macOS login startup and crash recovery |
 | `connect` | Show Dot connection details; `-revoke` disconnects clients |
 | `check [ALIAS...]` | Check configured agent access |
-| `ui [-no-open] [-local-only]` | Open or reconnect to the local monitor |
+| `ui [-no-open] [-local-only] [-path PATH]` | Open the macOS menu app; use `-path /history` for browser diagnostics |
 | `menubar` | Open the macOS status menu; quitting it leaves work running |
 | `run -repo NAME [-model ALIAS] "instructions"` | Run a local coding job and wait |
 | `jobs [ID]`, `logs ID` | Inspect saved work and output |
@@ -214,7 +214,7 @@ installation. See the [release guide](docs/releasing.md) for CI setup, packaging
 rehearsals, tagged draft releases, and publishing the stable Homebrew formula.
 `dotshift version` identifies the installed version and source commit.
 
-The optional [macOS status menu](docs/status-menu.md) is a service client.
+The [macOS menu bar app](docs/status-menu.md) is a service client.
 The marketing website in `website/` is separate and outside the local runner's
 build and runtime. Core development focuses on local coding, model handoff,
 review evidence, and reliable startup/reconnection.
