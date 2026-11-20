@@ -1,10 +1,11 @@
 # dotshift scope
 
-Updated 2026-11-09. This scope replaces the earlier router-first plan.
+Updated 2026-11-16. This scope replaces the earlier router-first plan.
 
 ## Core promise
 
-Dot hands off a local coding job. Dotshift selects from configured models,
+The user describes work to Dot and gets tested local changes back without
+using a project dashboard or managing agent iterations. Dot hands off the job. Dotshift selects from configured models,
 works in an isolated Git worktree, runs tests, fixes failures, and obtains a
 separate read-only review. It continues an accepted job while Dot is disconnected.
 
@@ -15,13 +16,17 @@ waiting for OpenAI. Dot's conversation remains in Dot.
 ## Keep
 
 - MCP submission and discovery; CLI access to the same runner.
-- Allowed repositories, local project creation/registration, and test profiles.
+- One authorized workspace; repository discovery, local creation, and automatic
+  validation. Explicit repository settings and test profiles remain optional.
 - Configured model aliases, explicit choices, ordered fallback, OpenAI-first
   selection, adaptive escalation, and independent reviewer choices.
 - One coding/test/review loop for tasks, goals, and follow-ups.
 - Saved progress, branch isolation, cancellation, resume, and idempotent retries.
 - Login startup, crash recovery, tunnel supervision, and authenticated access.
-- A small monitor for work, model choices, output, tests, and recovery controls.
+- A small optional monitor for current work, issues, and results. Put logs and
+  technical details behind disclosure; keep follow-ups and recovery in Dot.
+- Explicit application of tested and reviewed changes to a clean checkout.
+  Preserve local edits and require fresh validation after divergent integration.
 
 ## Trim and defer
 
@@ -56,6 +61,13 @@ Optional API execution uses the existing LiteLLM router. Model policy belongs
 in the runner, so interfaces do not implement their own selection logic.
 
 ## Acceptance checks
+
+Through authenticated MCP, discover an existing repository without registration,
+submit plain instructions with default settings, repair failing tests, obtain
+a separate review, recover after reconnecting, apply the exact reviewed commit,
+and deliver a follow-up. Create and build a new repository without choosing a
+test profile. None of these steps requires the dashboard. Automatic application
+must refuse local edits, unreviewed commits, and diverged or moved destinations.
 
 A small task and its follow-up should survive a simulated OpenAI limit, finish
 with Claude, pass meaningful tests, and receive a fresh review. A service crash

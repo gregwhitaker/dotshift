@@ -27,6 +27,8 @@ type Options struct {
 	PublicURL string
 	// Logf, if set, gets a line for each tool call and OAuth event.
 	Logf func(format string, args ...any)
+	// OnAuthenticated records contact without retaining credentials or requests.
+	OnAuthenticated func()
 }
 
 // NewHandler returns the HTTP handler serving the MCP endpoint at /mcp, the
@@ -64,7 +66,12 @@ func NewHandler(o Options) (http.Handler, error) {
 	oa := &oauthServer{store: o.Auth, passcode: o.Passcode, logf: logf, codes: map[string]*authCode{}}
 
 	mux := http.NewServeMux()
-	mux.Handle(mcpPath, oa.requireToken(streamable))
+	mux.Handle(mcpPath, oa.requireToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && o.OnAuthenticated != nil {
+			o.OnAuthenticated()
+		}
+		streamable.ServeHTTP(w, r)
+	})))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
 	for _, p := range []string{"/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource" + mcpPath} {
 		mux.HandleFunc(p, cors(oa.resourceMetadata))

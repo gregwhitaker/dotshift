@@ -1,29 +1,43 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { api, APIError, connect } from "./api";
 import {
   active,
   attention,
+  badgeClass,
+  currentWork,
   cleanLog,
   elapsed,
   filterFromSearch,
-  modelLabel,
-  resumable,
   selectJobs,
+  prioritizeJobs,
+  progressText,
   statusLabel,
   title,
+  workTitle,
   waiting,
   type Filter,
   type Job,
 } from "./model";
 import { Icon, Modal } from "./components";
-import { Models } from "./models";
+import { Markdown } from "./Markdown";
 import "./style.css";
 
 type Info = {
   execution_mode: string;
   mcp_enabled: boolean;
   started_at: string;
+  readiness?: Readiness | null;
+};
+type Readiness = {
+  state: string;
+  label: string;
+  detail: string;
+  message?: string;
+  checked_at: string;
+  last_contact?: string;
+  checks: { name: string; state: string; label: string; detail: string }[];
+  setup_command?: string;
 };
 type Output = { output: string; truncated: boolean };
 const filters: { key: Filter; label: string }[] = [
@@ -45,7 +59,6 @@ function currentID() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
-const isModels = () => location.pathname === "/models";
 
 function Mark() {
   return (
@@ -66,7 +79,7 @@ function Mark() {
 function Badge({ job }: { job: Job }) {
   return (
     <span
-      className={`badge ${job.status === "done" && job.test_result === "failed" ? "failed" : job.status}`}
+      className={`badge ${badgeClass(job)}`}
     >
       <span className="status-dot" />
       {statusLabel(job)}
@@ -94,66 +107,103 @@ function Copy({ value }: { value: string }) {
     </button>
   );
 }
-function StartHelp({ onClose }: { onClose: () => void }) {
+function StartHelp({ onClose, readiness, checking, error, connected, onCheck }: {
+  onClose: () => void;
+  readiness?: Readiness | null;
+  checking: boolean;
+  error: string;
+  connected: boolean;
+  onCheck: () => void;
+}) {
   return (
-    <Modal title="Start work with Dot" onClose={onClose}>
-      <p>
-        Ask Dot to use dotshift on a local project. Include what to change,
-        how to check it, and any model preference. The job will appear here.
-      </p>
-      <div className="guide-step">
-        <span>01</span>
-        <div>
-          <h3>Connect Dot once</h3>
-          <p>
-            Run <code>dotshift connect</code> for your connection details. Dot
-            can list your allowed repositories, create projects inside your
-            configured folder, and discover your model choices.
-          </p>
-        </div>
+    <Modal title="Work with Dot" onClose={onClose}>
+      <section className="readiness-panel" aria-label="Connection readiness">
+        <div className="readiness-heading"><h3>{!connected ? "Local service unavailable" : checking ? "Checking local access…" : error ? "Connection check needed" : readiness?.label || "Connection not checked"}</h3>
+          <button className="secondary" disabled={checking || !connected} onClick={onCheck}>{checking ? "Checking…" : "Check again"}</button></div>
+        <p>{!connected ? "Reopen Local Work from the Dotshift menu to reconnect. Your saved work stays on this computer." : error || readiness?.detail || "Checking the workspace, coding access, and Dot connection."}</p>
+        {connected && readiness && !error && <>
+          <ul className="readiness-checks">{readiness.checks.map(check => <li key={check.name}>
+            <Icon name={check.state === "ready" ? "check" : check.state === "attention" ? "alert" : "clock"} size={16} />
+            <details><summary>{check.name} <span>{check.label}</span></summary><p>{check.detail}</p></details>
+          </li>)}</ul>
+          <p className="checked-at">Checked {date(readiness.checked_at)}{readiness.last_contact && <> · Dot last reached this service {date(readiness.last_contact)}</>}</p>
+          {readiness.message && <MessageForDot message={readiness.message} />}
+        </>}
+      </section>
+      <p>Tell Dot what you want changed. Dot finds the local code, implements the change,
+        runs tests and review, and applies the result when that is part of your request.</p>
+      <div className="command-block">
+        <p>“Use dotshift to add search to my app, test it, and apply the finished changes locally.”</p>
       </div>
-      <div className="guide-step">
-        <span>02</span>
-        <div>
-          <h3>Give Dot the coding job</h3>
-          <p>
-            “Use dotshift to add search to my app, test it, and review it.
-            Use OpenAI first and continue with Claude if OpenAI hits its limit.”
-          </p>
-          <p>You can also start a job from the terminal:</p>
-          <div className="command-block">
-            <code>dotshift run -repo REPO "Describe the work"</code>
-            <Copy value={'dotshift run -repo REPO "Describe the work"'} />
-          </div>
-          <p>
-            Every new job includes fallback, tests, and a separate review.
-            This monitor shows progress and lets you cancel or resume work.
-          </p>
-        </div>
-      </div>
+      <p>Keep follow-ups in your conversation with Dot. This window is optional; closing it leaves local work running.</p>
+      <details className="setup-help">
+        <summary>First connection or reconnect</summary>
+        <p>Ask Dot to check its dotshift connection and list your local repositories. If the integration needs connecting, run this on your computer for its connection instructions:</p>
+        <div className="setup-command"><code>{readiness?.setup_command || "dotshift connect"}</code><Copy value={readiness?.setup_command || "dotshift connect"} /></div>
+        <p>Complete any required sign-in, then ask Dot to check again. Checking here refreshes the status; it does not change your sign-in or restart work.</p>
+      </details>
       <div className="dialog-actions">
-        <button className="primary" onClick={onClose}>
-          Got it <Icon name="check" size={16} />
-        </button>
+        <button className="primary" onClick={onClose}>Got it</button>
       </div>
     </Modal>
   );
 }
 
+function MessageForDot({ message }: { message: string }) {
+  const [copied, setCopied] = useState(false);
+  const [fallback, setFallback] = useState(false);
+  useEffect(() => { setCopied(false); setFallback(false); }, [message]);
+  return <div className="message-for-dot">
+    <button className="secondary" onClick={async () => {
+      try { await navigator.clipboard.writeText(message); setCopied(true); }
+      catch { setFallback(true); }
+    }}>
+      <Icon name={copied ? "check" : "copy"} size={15} />
+      {copied ? "Copied — paste into Dot" : "Copy message for Dot"}
+    </button>
+    <span className="handoff-hint" role="status">{copied ? "The message includes this request’s context." : "Paste it into your conversation with Dot."}</span>
+    {fallback && <textarea aria-label="Message for Dot" readOnly value={message} onFocus={e => e.target.select()} />}
+  </div>;
+}
+
 function App() {
   const [id, setID] = useState(currentID);
-  const [models, setModels] = useState(isModels);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [info, setInfo] = useState<Info | null>(null);
   const [error, setError] = useState("");
   const [connected, setConnected] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [filter, setFilter] = useState<Filter>(() => filterFromSearch(location.search));
-  const [repo, setRepo] = useState("");
   const [help, setHelp] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [readinessError, setReadinessError] = useState("");
+  const checkReadiness = useCallback(async (force = false, signal?: AbortSignal) => {
+    setChecking(true);
+    setReadinessError("");
+    try {
+      const readiness = await api<Readiness>(force ? "/readiness/check" : "/readiness", {
+        method: force ? "POST" : "GET", ...(force ? { body: "{}" } : {}), signal,
+      });
+      if (!signal?.aborted) setInfo(info => info ? { ...info, readiness } : info);
+    } catch {
+      if (!signal?.aborted) setReadinessError("Could not finish checking local access. Check again; your saved work is unchanged.");
+    } finally {
+      if (!signal?.aborted) setChecking(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (!connected) { setChecking(false); return; }
+    const controller = new AbortController();
+    void checkReadiness(false, controller.signal);
+    const timer = setInterval(() => { void checkReadiness(false, controller.signal); }, 60000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [connected, checkReadiness]);
   const [theme, setTheme] = useState(
     () => localStorage.getItem("dotshift-theme") || "light",
   );
+  useEffect(() => {
+    if (!id) document.title = "dotshift · Local work";
+  }, [id]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("dotshift-theme", theme);
@@ -180,7 +230,7 @@ function App() {
           setError(
             e instanceof APIError
               ? e.message
-              : "The local service is unavailable. Run dotshift ui to reconnect.",
+              : "The local service is unavailable. Reopen Local Work from the Dotshift menu to reconnect.",
           );
         }
       }
@@ -202,131 +252,43 @@ function App() {
   useEffect(() => {
     const listener = () => {
       setID(currentID());
-      setModels(isModels());
       setFilter(filterFromSearch(location.search));
     };
     window.addEventListener("popstate", listener);
     return () => window.removeEventListener("popstate", listener);
   }, []);
   function navigate(next: string) {
-    history.pushState(null, "", next ? jobPath(next) : "/");
+    const query = filter === "all" ? "" : `?filter=${filter}`;
+    history.pushState(null, "", next ? jobPath(next) + query : "/" + query);
     setID(next);
-    setModels(false);
     window.scrollTo(0, 0);
   }
-  function showModels() {
-    history.pushState(null, "", "/models");
-    setID("");
-    setModels(true);
-    setRepo("");
-    window.scrollTo(0, 0);
-  }
-  const repos = [...new Set(jobs.map((job) => job.repo))].sort();
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <a
-          className="brand"
-          href="/"
-          onClick={(e) => {
-            e.preventDefault();
-            navigate("");
-          }}
-        >
-          <img className="brand-logo" src="/brand/dotshift-logo-dark.svg" width="167" height="32" alt="dotshift" />
-        </a>
-        <div className="workspace-caption">LOCAL CODING & REVIEW</div>
-        <button
-          className={`nav-item ${!id && !repo && !models ? "selected" : ""}`}
-          onClick={() => {
-            setRepo("");
-            navigate("");
-          }}
-        >
-          <Icon name="grid" />
-          Work<span className="nav-count">{jobs.length}</span>
-        </button>
-        <button
-          className={`nav-item ${models ? "selected" : ""}`}
-          onClick={showModels}
-        >
-          <Icon name="activity" />
-          Models
-        </button>
-        <div className="sidebar-section">
-          <span>REPOSITORIES</span>
-          <span>{repos.length.toString().padStart(2, "0")}</span>
-        </div>
-        <div className="repo-list">
-          {repos.map((name) => (
-            <button
-              className={`repo-link ${repo === name && !models ? "selected" : ""}`}
-              key={name}
-              onClick={() => {
-                setRepo(name);
-                navigate("");
-              }}
-              aria-pressed={repo === name}
-            >
-              <Icon name="folder" size={16} />
-              <span>{name}</span>
-              {jobs.some((job) => job.repo === name && active(job)) && (
-                <i className="tiny-live" />
-              )}
+    <div className="app-shell monitor">
+      <main className="main">
+        <header className="topbar">
+          <a href="/" className="monitor-brand" onClick={(e) => { e.preventDefault(); navigate(""); }}>
+            <img className="brand-logo" src={`/brand/dotshift-logo-${theme === "dark" ? "dark" : "light"}.svg`} width="167" height="32" alt="dotshift" />
+          </a>
+          <div className="monitor-tools">
+            <button className="topbar-live readiness-button" onClick={() => setHelp(true)} aria-label="Connection and help">
+              <span className={`connection-dot ${connected && !readinessError && info?.readiness?.state === "ready" ? "online" : ""}`} />
+              {!connected ? error ? "Reconnect local service" : "Connecting…" : readinessError ? "Check connection" : info?.readiness?.label || "Checking local access…"}
+              <Icon name="arrow" size={12} />
             </button>
-          ))}
-          {!repos.length && (
-            <p className="sidebar-note">
-              Repositories appear here as work starts.
-            </p>
-          )}
-        </div>
-        <div className="sidebar-bottom">
-          <div className="local-card">
-            <span className={`connection-dot ${connected ? "online" : ""}`} />
-            <div>
-              <strong>
-                {connected ? "Service connected" : "Connecting to service"}
-              </strong>
-              <small>
-                {info
-                  ? `${info.execution_mode === "subscription" ? "Subscription" : "API"} mode`
-                  : "On your machine"}
-              </small>
-            </div>
-          </div>
-          <button className="sidebar-help" onClick={() => setHelp(true)}>
-            <Icon name="terminal" size={16} />
-            Start work with Dot
-            <Icon name="arrow" size={14} />
-          </button>
-          <div className="sidebar-footer">
-            <span>YOUR MACHINE. YOUR CODE.</span>
-            <button
-              className="icon-button"
-              onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-              aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}
-              title="Toggle theme"
-            >
+            <button className="icon-button" onClick={() => setTheme(theme === "light" ? "dark" : "light")}
+              aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}>
               <Icon name="sun" size={16} />
             </button>
           </div>
-        </div>
-      </aside>
-      <main className="main">
-        <header className="topbar">
-          <span className="breadcrumbs">
-            Local runner <span>/</span>{" "}
-            <strong>
-              {id ? "Job detail" : models ? "Models" : "Work"}
-            </strong>
-          </span>
-          <span className="topbar-live">
-            <span className={`connection-dot ${connected ? "online" : ""}`} />
-            {connected ? "Live updates" : "Disconnected"}
-            <span className="local-pill">LOCAL</span>
-          </span>
         </header>
+        {connected && info?.readiness?.state === "attention" && (
+          <div className="connection-error" role="status">
+            <Icon name="alert" />
+            <span>{info.readiness.label}. {info.readiness.detail}</span>
+            <button className="text-button" onClick={() => setHelp(true)}>Connection help</button>
+          </div>
+        )}
         {error && (
           <div className="connection-error" role="alert">
             <Icon name="alert" />
@@ -344,17 +306,17 @@ function App() {
             </h2>
             <p>
               {error
-                ? "Open the authenticated link printed by dotshift ui."
-                : "Loading your coding jobs."}
+                ? "Choose Open Local Work in the Dotshift menu, or run dotshift ui, to reopen this monitor."
+                : "Loading your local work."}
             </p>
           </div>
-        ) : models ? (
-          <Models />
         ) : id ? (
           <GoalDetail
             key={id}
             id={id}
             connected={connected}
+            jobs={jobs}
+            navigate={navigate}
             onBack={() => navigate("")}
           />
         ) : (
@@ -362,181 +324,88 @@ function App() {
             jobs={jobs}
             filter={filter}
             setFilter={setFilter}
-            repo={repo}
-            clearRepo={() => setRepo("")}
             navigate={navigate}
             onHelp={() => setHelp(true)}
+            ready={info?.readiness?.state === "ready"}
           />
         )}
         <footer className="page-footer">
           <span>
             <Icon name="branch" size={14} />
-            Work happens on separate branches.
+            You can close this window. Local work keeps running.
           </span>
-          <span>dotshift / local runner</span>
+          <span>On your computer</span>
         </footer>
       </main>
-      {help && <StartHelp onClose={() => setHelp(false)} />}
+      {help && <StartHelp onClose={() => setHelp(false)} readiness={info?.readiness} checking={checking} error={readinessError}
+        connected={connected} onCheck={() => void checkReadiness(true)} />}
     </div>
   );
 }
 
-function Overview({
-  jobs,
-  filter,
-  setFilter,
-  repo,
-  clearRepo,
-  navigate,
-  onHelp,
-}: {
+function Overview({ jobs, filter, setFilter, navigate, onHelp, ready }: {
   jobs: Job[];
   filter: Filter;
-  setFilter: (v: Filter) => void;
-  repo: string;
-  clearRepo: () => void;
+  setFilter: (filter: Filter) => void;
   navigate: (id: string) => void;
   onHelp: () => void;
+  ready: boolean;
 }) {
   const [query, setQuery] = useState("");
-  useEffect(() => {
-    document.title = "dotshift · Work";
-  }, []);
-  const scoped = jobs.filter((job) => !repo || job.repo === repo);
-  const shown = selectJobs(jobs, filter, repo, query);
-  const countActive = scoped.filter(active).length,
-    countAttention = scoped.filter(attention).length;
+  const shown = prioritizeJobs(selectJobs(jobs, filter, "", query));
+  const requests = currentWork(jobs);
+  const running = requests.filter(active).length;
+  const needsAttention = requests.filter(attention).length;
+  const needsInput = requests.some(job => attention(job) && job.display?.kind === "needs_input");
   return (
     <div className="page overview">
       <div className="page-heading">
         <div>
-          <h1>{repo || "Local coding jobs"}</h1>
-          <p>
-            {countActive
-              ? `${countActive} ${countActive === 1 ? "job is" : "jobs are"} running. `
-              : "No jobs running. "}
-            {countAttention
-              ? `${countAttention} ${countAttention === 1 ? "needs" : "need"} your attention.`
-              : "Follow the progress. Review the results."}
-          </p>
+          <div className="eyebrow">DOT’S LOCAL WORK</div>
+          <h1>{needsInput ? "Dot needs your input." : needsAttention ? "Dot has work to pick up." : running ? "Work is underway." : "Your local work."}</h1>
+          <p>{needsAttention ? "Open the request to see what is needed and continue with Dot. Your progress is saved."
+            : running
+            ? "Coding, tests, and review continue here. Follow up with Dot in your conversation."
+            : "Tell Dot what to build or change. Your computer takes it from there."}</p>
         </div>
-        <button className="secondary" onClick={onHelp}>
-          <Icon name="terminal" size={17} />
-          Start with Dot
-        </button>
       </div>
-      <section className="work-section" aria-label="Jobs and goals">
-        <div className="section-title">
-          <div>
-            <h2>
-              {repo ? "Repository work" : "All your work"}
-              <span>{scoped.length}</span>
-            </h2>
-            {repo && (
-              <button className="text-button" onClick={clearRepo}>
-                Show all repositories
-              </button>
-            )}
-          </div>
-          <span className="section-note">
-            Newest first · updates every 2 seconds
-          </span>
-        </div>
-        <div className="work-toolbar">
-          <div className="filters" aria-label="Filter jobs">
+      <section className="work-section" aria-label="Local work">
+        {jobs.length > 0 && <div className="work-toolbar">
+          <div className="filters" aria-label="Filter work">
             {filters.map((item) => (
-              <button
-                key={item.key}
-                aria-pressed={filter === item.key}
-                className={filter === item.key ? "current" : ""}
-                onClick={() => setFilter(item.key)}
-              >
+              <button key={item.key} aria-pressed={filter === item.key}
+                className={filter === item.key ? "current" : ""} onClick={() => {
+                  setFilter(item.key);
+                  history.replaceState(null, "", item.key === "all" ? "/" : `/?filter=${item.key}`);
+                }}>
                 {item.label}
+                {item.key === "active" && running > 0 ? ` (${running})` : ""}
+                {item.key === "attention" && needsAttention > 0 ? ` (${needsAttention})` : ""}
               </button>
             ))}
           </div>
           <label className="search">
             <Icon name="search" size={16} />
-            <input
-              aria-label="Search jobs"
-              placeholder="Search work…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            {query && (
-              <button
-                className="icon-button"
-                onClick={() => setQuery("")}
-                aria-label="Clear search"
-              >
-                <Icon name="close" size={14} />
-              </button>
-            )}
+            <input aria-label="Search work" placeholder="Find work…" value={query} onChange={(e) => setQuery(e.target.value)} />
+            {query && <button className="icon-button" onClick={() => setQuery("")} aria-label="Clear search"><Icon name="close" size={14} /></button>}
           </label>
-        </div>
+        </div>}
         {shown.length ? (
           <div className="job-table">
-            <div className="table-head">
-              <span>JOB</span>
-              <span>STATUS</span>
-              <span>MODEL</span>
-              <span>CREATED</span>
-              <span />
-            </div>
             {shown.map((job) => (
-              <a
-                className="job-row"
-                key={job.id}
-                href={jobPath(job.id)}
-                onClick={(e) => {
-                  if (!e.metaKey && !e.ctrlKey) {
-                    e.preventDefault();
-                    navigate(job.id);
-                  }
-                }}
-              >
+              <a className="job-row" key={job.id} href={jobPath(job.id)} onClick={(e) => {
+                if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); navigate(job.id); }
+              }}>
                 <div className="job-title">
                   <span className={`job-glyph ${job.status}`}>
-                    <Icon
-                      name={
-                        attention(job)
-                          ? "alert"
-                          : job.status === "done"
-                            ? "check"
-                            : active(job)
-                              ? "activity"
-                              : "stop"
-                      }
-                      size={18}
-                    />
+                    <Icon name={attention(job) ? "alert" : job.status === "done" ? "check" : active(job) ? "activity" : "stop"} size={18} />
                   </span>
                   <div>
-                    <strong>{title(job)}</strong>
-                    <div className="job-subtitle">
-                      <span>{job.repo}</span>
-                      <span>·</span>
-                      <span>
-                        {job.goal
-                          ? `${job.goal.iterations} ${job.goal.iterations === 1 ? "iteration" : "iterations"}`
-                          : `${job.commits} commits`}
-                      </span>
-                    </div>
+                    <strong>{workTitle(job)}</strong>
+                    <div className="job-subtitle"><span>{job.repo}</span><span>·</span><span>{progressText(job)}</span></div>
                   </div>
                 </div>
                 <Badge job={job} />
-                <div className="model-cell">
-                  <span>
-                    {modelLabel(
-                      job.goal?.model_selection?.active_model || job.model,
-                    )}
-                  </span>
-                  <small>
-                    {job.goal?.model_selection?.strategy?.replaceAll(
-                      "_",
-                      " ",
-                    ) || job.execution_mode}
-                  </small>
-                </div>
                 <span className="created-cell">{date(job.created_at)}</span>
                 <Icon name="arrow" size={16} />
               </a>
@@ -544,40 +413,14 @@ function Overview({
           </div>
         ) : (
           <div className="empty-state">
-            <div className="empty-icon">
-              <Icon name={jobs.length ? "search" : "terminal"} size={28} />
-            </div>
-            <h3>
-              {jobs.length
-                ? "No work matches this view"
-                : "Ready for a coding job"}
-            </h3>
-            <p>
-              {jobs.length
-                ? "Try another filter or search to find your work."
-                : "Ask Dot to use dotshift on a local project. Coding, tests, model switches, and review will appear here."}
-            </p>
-            {jobs.length ? (
-              <button
-                className="secondary"
-                onClick={() => {
-                  setQuery("");
-                  setFilter("all");
-                  clearRepo();
-                }}
-              >
-                Clear filters
-              </button>
-            ) : (
-              <button className="primary" onClick={onHelp}>
-                How to start
-                <Icon name="arrow" size={16} />
-              </button>
-            )}
+            <div className="empty-icon"><Icon name={jobs.length ? "search" : "terminal"} size={28} /></div>
+            <h3>{jobs.length ? "No work in this view" : ready ? "Your next idea starts with Dot." : "Connect once. Then ask Dot."}</h3>
+            <p>{jobs.length ? "Choose another view or search to find your work." : ready ? "Ask Dot to change a local app or build something new. Progress and results will appear here." : "Check the connection, then tell Dot what to build. Dot handles the code, tests, and follow-ups."}</p>
+            {jobs.length ? <button className="secondary" onClick={() => { setQuery(""); setFilter("all"); }}>Show all work</button>
+              : <button className="secondary" onClick={onHelp}>{ready ? "How to work with Dot" : "Check connection"} <Icon name="arrow" size={16} /></button>}
           </div>
         )}
       </section>
-
     </div>
   );
 }
@@ -586,20 +429,25 @@ function GoalDetail({
   id,
   connected,
   onBack,
+  jobs,
+  navigate,
 }: {
   id: string;
   connected: boolean;
   onBack: () => void;
+  jobs: Job[];
+  navigate: (id: string) => void;
 }) {
   const [job, setJob] = useState<Job | null>(null);
   const [output, setOutput] = useState<Output>({
     output: "",
     truncated: false,
   });
-  const [tab, setTab] = useState("activity");
+  const [tab, setTab] = useState("changes");
+  const [showOutput, setShowOutput] = useState(false);
   const [error, setError] = useState("");
   const [outputError, setOutputError] = useState("");
-  const [dialog, setDialog] = useState<"resume" | "cancel" | null>(null);
+  const [dialog, setDialog] = useState<"cancel" | null>(null);
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -617,14 +465,14 @@ function GoalDetail({
         if (!stopped) {
           setJob(next);
           setError("");
-          document.title = `dotshift · ${title(next)}`;
+          document.title = `dotshift · ${!next.current_id || next.current_id === next.id ? workTitle(next) : title(next)}`;
         }
       } catch (e) {
         if (!stopped)
           setError(
             e instanceof APIError
               ? e.message
-              : "Could not refresh this goal. Check the service connection.",
+              : "Could not refresh this job. Check the service connection.",
           );
       }
       if (!stopped) timer = setTimeout(refresh, document.hidden ? 10000 : 2000);
@@ -639,7 +487,7 @@ function GoalDetail({
   useEffect(() => {
     setOutput({ output: "", truncated: false });
     setOutputError("");
-    if (tab === "tests") return;
+    if (!showOutput || tab === "tests") return;
     let stopped = false,
       timer: ReturnType<typeof setTimeout>;
     const controller = new AbortController();
@@ -668,7 +516,7 @@ function GoalDetail({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [id, tab, revision]);
+  }, [id, tab, revision, showOutput]);
   useEffect(() => {
     if (follow && tab === "activity" && logRef.current)
       logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -723,47 +571,34 @@ function GoalDetail({
         </div>
       </div>
     );
-  const selection =
-    job.goal?.phase === "reviewing"
-      ? job.goal.reviewer_selection || job.goal.model_selection
-      : job.goal?.model_selection;
   const wait = waiting(job);
-  const phase = job.goal?.phase || "working";
+  const selection = job.goal?.phase === "reviewing"
+    ? job.goal.reviewer_selection || job.goal.model_selection
+    : job.goal?.model_selection;
+  const historical = !!job.current_id && job.current_id !== job.id;
+  const historyItems = jobs.filter(item => item.work_id && item.work_id === job.work_id);
   return (
     <div className="page detail">
       <button className="back-link" onClick={onBack}>
         <Icon name="back" size={16} />
-        All work
+        Back to work
       </button>
       <div className="detail-heading">
         <div>
           <div className="eyebrow">
-            {job.repo} <span>/</span>{" "}
-            {job.goal ? "CODING JOB" : "CODING TASK"} <span>/</span> {job.id}
+            {job.repo}
           </div>
-          <h1>{title(job)}</h1>
+          <h1>{historical ? title(job) : workTitle(job)}</h1>
           <div className="detail-subheading">
             <Badge job={job} />
             <span>
               <Icon name="clock" size={15} />
               {elapsed(job)}
             </span>
-            <span>Started {date(job.started_at || job.created_at)}</span>
+            <span>{job.started_at ? "Started" : "Requested"} {date(job.started_at || job.created_at)}</span>
           </div>
         </div>
         <div className="detail-actions">
-          {(attention(job) || job.attention_dismissed) && (
-            <button
-              className="secondary"
-              disabled={pending || !connected}
-              onClick={() => void setAttentionDismissed(!job.attention_dismissed)}
-            >
-              <Icon name={job.attention_dismissed ? "alert" : "check"} size={16} />
-              {job.attention_dismissed
-                ? "Show in attention"
-                : "Dismiss from attention"}
-            </button>
-          )}
           {active(job) && (
             <button
               className="secondary"
@@ -774,22 +609,10 @@ function GoalDetail({
               }}
             >
               <Icon name="stop" size={16} />
-              Cancel {job.goal ? "goal" : "task"}
+              Stop work
             </button>
           )}
-          {resumable(job) && (
-            <button
-              className="primary"
-              disabled={pending || !connected}
-              onClick={() => {
-                setActionError("");
-                setDialog("resume");
-              }}
-            >
-              <Icon name="play" size={16} />
-              Resume goal
-            </button>
-          )}
+
         </div>
       </div>
       {error && (
@@ -814,81 +637,38 @@ function GoalDetail({
           </div>
         </div>
       )}
-      {(job.error || wait) && (
-        <div className={`notice ${attention(job) ? "warning" : ""}`}>
-          <Icon name={attention(job) ? "alert" : "clock"} />
-          <div>
-            <strong>
-              {wait && active(job)
-                ? "Waiting for model availability"
-                : statusLabel(job)}
-            </strong>
-            <p>
-              {job.error || selection?.reason}
-              {wait && active(job) && <> · Next retry {date(wait)}</>}
-            </p>
-          </div>
+      {historical && <div className="notice history-notice">
+        <Icon name="clock" />
+        <div><strong>{job.resolved_by ? "Resolved by later work" : "Earlier work on this request"}</strong>
+          <p>{job.resolved_by ? "A later linked result passed validation. This earlier check is kept in history." : "Open the current request for its latest result and next step."}</p>
+          <button className="text-button" onClick={() => navigate(job.current_id!)}>View current request <Icon name="arrow" size={14} /></button>
         </div>
-      )}
-      {job.goal && (
-        <div className="phase-strip">
-          {[
-            { key: "working", name: "Implement", icon: "terminal" },
-            { key: "testing", name: "Test", icon: "activity" },
-            { key: "reviewing", name: "Review", icon: "check" },
-          ].map((step, index) => (
-            <div
-              key={step.key}
-              className={`phase ${job.status === "done" ? "complete" : phase === step.key ? "present" : ""}`}
-            >
-              <span className="phase-icon">
-                <Icon
-                  name={job.status === "done" ? "check" : step.icon}
-                  size={17}
-                />
-              </span>
-              <div>
-                <small>0{index + 1}</small>
-                <strong>{step.name}</strong>
-              </div>
-              {phase === step.key && active(job) && (
-                <span className="phase-current">
-                  {wait ? "Waiting" : "In progress"}
-                </span>
-              )}
-            </div>
-          ))}
-          <div className="iteration">
-            <strong>{job.goal.iterations.toString().padStart(2, "0")}</strong>
-            <span>
-              completed iterations
-              {job.goal.max_iterations > 0 && (
-                <small>of {job.goal.max_iterations} allowed</small>
-              )}
-            </span>
-          </div>
+      </div>}
+      {job.display && <section className={`outcome-card ${attention(job) && !historical ? "needs-attention" : ""}`} aria-label="Work status">
+        <div><h2>{statusLabel(job)}</h2><p>{job.display.detail}</p>
+          {wait && active(job) && <p>Next retry {date(wait)}</p>}
         </div>
-      )}
+        {!historical && job.display.message && <MessageForDot message={job.display.message} />}
+        {job.error && <details className="issue-details"><summary>What happened</summary><p>{job.error}</p></details>}
+      </section>}
       <div className="detail-grid">
         <div className="detail-content">
-          <section className="panel objective">
-            <div className="panel-heading">
-              <h2>The objective</h2>
-              <span className="micro-label">ORIGINAL INSTRUCTIONS</span>
-            </div>
-            <p>{job.prompt}</p>
-            {job.goal?.additional_instructions && (
-              <details>
-                <summary>Additional instructions</summary>
-                <p>{job.goal.additional_instructions}</p>
-              </details>
+          {(job.summary || job.goal?.report.summary) && <section className="panel assessment" aria-label="Work result">
+            <div className="panel-heading"><h2>{job.status === "done"
+              ? job.test_result === "failed" ? "Saved findings" : "Result"
+              : "Progress so far"}</h2></div>
+            <Markdown>{job.summary || job.goal?.report.summary || ""}</Markdown>
+            {job.goal?.report.next_steps && job.status !== "done" && !historical && job.goal.report.next_steps !== job.display?.detail && (
+              <div className="next-steps"><strong>{attention(job) ? "What is needed" : "Dot’s next step"}</strong><Markdown>{job.goal.report.next_steps}</Markdown></div>
             )}
-          </section>
-          <div className="detail-tabs" role="tablist" aria-label="Goal output">
+          </section>}
+          <details className="panel output-details" onToggle={e => setShowOutput(e.currentTarget.open)}>
+            <summary>Changes, tests, and logs</summary>
+          <div className="detail-tabs" role="tablist" aria-label="Job output">
             {[
-              ["activity", "Activity", "terminal"],
               ["changes", "Changes", "branch"],
               ["tests", "Tests", "check"],
+              ["activity", "Activity", "terminal"],
             ].map(([key, label, icon]) => (
               <button
                 key={key}
@@ -899,7 +679,7 @@ function GoalDetail({
                 tabIndex={tab === key ? 0 : -1}
                 onClick={() => setTab(key)}
                 onKeyDown={(e) => {
-                  const tabs = ["activity", "changes", "tests"];
+                  const tabs = ["changes", "tests", "activity"];
                   let next = tab;
                   if (e.key === "ArrowRight")
                     next = tabs[(tabs.indexOf(tab) + 1) % 3];
@@ -932,26 +712,8 @@ function GoalDetail({
           >
             {tab === "activity" && (
               <>
-                {(job.summary || job.goal?.report.summary) && (
-                  <section className="panel assessment">
-                    <div className="panel-heading">
-                      <h3>
-                        {job.status === "done"
-                          ? "Completion notes"
-                          : "Latest assessment"}
-                      </h3>
-                      <Icon name="activity" size={16} />
-                    </div>
-                    <p>{job.summary || job.goal?.report.summary}</p>
-                    {job.goal?.report.next_steps && job.status !== "done" && (
-                      <div className="next-steps">
-                        <strong>Next steps</strong>
-                        <p>{job.goal.report.next_steps}</p>
-                      </div>
-                    )}
-                  </section>
-                )}
-                <div className="log-panel">
+                <div className="execution-details">
+                  <div className="log-panel">
                   <div className="log-heading">
                     <span>
                       <Icon name="terminal" size={16} />
@@ -987,6 +749,7 @@ function GoalDetail({
                         ? "Refreshing every 2s"
                         : "Work preserved locally"}
                     </span>
+                  </div>
                   </div>
                 </div>
               </>
@@ -1035,7 +798,7 @@ function GoalDetail({
                     <Icon name="branch" size={25} />
                     <p>
                       {active(job)
-                        ? "Committed changes appear after an iteration finishes."
+                        ? "Changes appear as work is saved."
                         : "No committed changes to display."}
                     </p>
                   </div>
@@ -1085,14 +848,34 @@ function GoalDetail({
               </section>
             )}
           </div>
+          </details>
+          {historyItems.length > 1 && <details className="panel request-history">
+            <summary>Request history ({historyItems.length})</summary>
+            <p className="panel-description">Related work stays together. Dot uses this history to continue your request.</p>
+            <ol>{[...historyItems].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).map(item => <li key={item.id}>
+              <a href={jobPath(item.id)} aria-current={item.id === job.id ? "page" : undefined} onClick={e => {
+                if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); navigate(item.id); }
+              }}><span>{title(item)}</span><small>{item.resolved_by ? "Resolved in later work" : statusLabel(item)} · {date(item.created_at)}</small></a>
+            </li>)}</ol>
+          </details>}
+          <details className="panel objective request-instructions">
+            <summary>Original instructions</summary>
+            <p>{job.prompt}</p>
+            {job.goal?.additional_instructions && <details><summary>Additional instructions</summary><p>{job.goal.additional_instructions}</p></details>}
+          </details>
         </div>
         <aside className="detail-aside">
-          <section className="panel">
-            <div className="panel-heading">
-              <h2>Run details</h2>
-              <Icon name="activity" size={16} />
-            </div>
+          <details className="panel technical-details">
+            <summary>Technical details</summary>
+            {!historical && (attention(job) || job.attention_dismissed) && <button
+              className="text-button attention-dismiss"
+              disabled={pending || !connected}
+              onClick={() => void setAttentionDismissed(!job.attention_dismissed)}>
+              {job.attention_dismissed ? "Show this notice again" : "Dismiss this notice"}
+            </button>}
             <dl>
+              <dt>Task reference</dt>
+              <dd><code>{job.id}</code><Copy value={job.id} /></dd>
               <dt>Repository</dt>
               <dd>
                 <Icon name="folder" size={14} />
@@ -1138,7 +921,7 @@ function GoalDetail({
                 </>
               )}
             </dl>
-          </section>
+
           {selection?.reason && (
             <section className="model-note">
               <Icon name="activity" size={16} />
@@ -1167,27 +950,19 @@ function GoalDetail({
               </p>
             </section>
           )}
-          <div className="branch-note">
-            <Icon name="branch" size={17} />
-            <p>
-              Your working copy stays separate.
-              <br />
-              Review this branch before merging.
-            </p>
-          </div>
+            <p className="panel-description">Coding stays on a separate branch. Dot can apply the tested result when you ask.</p>
+          </details>
         </aside>
       </div>
       {dialog === "cancel" && (
         <Modal
-          title={`Cancel this ${job.goal ? "goal" : "task"}?`}
+          title="Stop this work?"
           onClose={() => {
             if (!pending) setDialog(null);
           }}
         >
           <p>
-            The current agent or test process will stop. The branch and any
-            remaining worktree will be preserved.
-            {job.goal && " You can resume the goal later."}
+            Work will stop and your progress will be saved. Ask Dot to continue whenever you are ready.
           </p>
           {actionError && (
             <div className="notice warning" role="alert">
@@ -1212,113 +987,8 @@ function GoalDetail({
           </div>
         </Modal>
       )}
-      {dialog === "resume" && (
-        <ResumeDialog
-          job={job}
-          pending={pending}
-          error={actionError}
-          onClose={() => {
-            if (!pending) setDialog(null);
-          }}
-          onSubmit={action}
-        />
-      )}
-    </div>
-  );
-}
 
-function ResumeDialog({
-  job,
-  pending,
-  error,
-  onClose,
-  onSubmit,
-}: {
-  job: Job;
-  pending: boolean;
-  error: string;
-  onClose: () => void;
-  onSubmit: (body: object) => Promise<void>;
-}) {
-  const [input, setInput] = useState(""),
-    [retry, setRetry] = useState(false),
-    [limit, setLimit] = useState(String(job.goal?.max_iterations || 0));
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    void onSubmit({
-      input,
-      max_iterations: Number(limit),
-      retry_unavailable: retry,
-    });
-  }
-  return (
-    <Modal title="Pick up where it left off" onClose={onClose}>
-      <p>Continue on the same branch with the existing work and progress.</p>
-      <form onSubmit={submit}>
-        <label className="form-field">
-          Additional instructions
-          <textarea
-            autoFocus
-            rows={4}
-            placeholder="Resolve a blocker or clarify what to do next…"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            disabled={pending}
-          />
-        </label>
-        <label className="form-field">
-          Total iteration limit
-          <input
-            type="number"
-            min={0}
-            step={1}
-            required
-            value={limit}
-            onChange={(e) => setLimit(e.target.value)}
-            disabled={pending}
-          />
-          <small>
-            {job.goal?.iterations} completed so far. Use 0 for unlimited.
-          </small>
-        </label>
-        {job.goal?.model_selection && (
-          <label className="checkbox-field">
-            <input
-              type="checkbox"
-              checked={retry}
-              onChange={(e) => setRetry(e.target.checked)}
-              disabled={pending}
-            />
-            <span>
-              Retry unavailable models
-              <small>
-                Use after allowance resets or access is restored. Clears cached
-                availability for these models across goals.
-              </small>
-            </span>
-          </label>
-        )}
-        {error && (
-          <div className="notice warning" role="alert">
-            {error}
-          </div>
-        )}
-        <div className="dialog-actions">
-          <button
-            type="button"
-            className="secondary"
-            onClick={onClose}
-            disabled={pending}
-          >
-            Back
-          </button>
-          <button className="primary" disabled={pending}>
-            {pending ? "Resuming…" : "Resume goal"}
-            <Icon name="play" size={16} />
-          </button>
-        </div>
-      </form>
-    </Modal>
+    </div>
   );
 }
 

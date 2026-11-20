@@ -45,7 +45,7 @@ esac
 		t.Fatal(err)
 	}
 	t.Cleanup(closeStore)
-	stop, err := startIntake(cfg, runner, dir)
+	stop, err := startIntake(cfg, runner, dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

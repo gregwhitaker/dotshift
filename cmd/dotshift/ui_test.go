@@ -73,6 +73,18 @@ func TestInitDefaultsToSubscriptionsAndKeepsAPIOptIn(t *testing.T) {
 	}
 }
 
+func TestInitAuthorizesOneWorkspaceWithAutomaticTests(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dotshift.yaml")
+	workspace := filepath.Join(t.TempDir(), "my workspace")
+	if output, err := cli(t, "init", "-config", path, "-workspace", workspace); err != nil {
+		t.Fatalf("init workspace: %v %s", err, output)
+	}
+	cfg, err := config.Load(path)
+	if err != nil || cfg.Projects.Root != workspace || !cfg.Projects.Discover || cfg.Projects.TestProfiles["auto"] != "auto" || len(cfg.Repos) != 0 {
+		t.Fatalf("workspace setup: %+v, %v", cfg, err)
+	}
+}
+
 func TestUILaunchReuseStopAndRestart(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dotshift.yaml")

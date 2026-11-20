@@ -29,14 +29,16 @@ accounts. Keep configuration and saved work outside Homebrew's Cellar:
 
 ```sh
 mkdir -p ~/.config/dotshift
-dotshift init -config ~/.config/dotshift/dotshift.yaml
+dotshift init -config ~/.config/dotshift/dotshift.yaml -workspace ~/workspace
 codex login
 claude auth login
 ```
 
-Edit `~/.config/dotshift/dotshift.yaml` to add allowed repositories and their
-test commands, or a project root and test profiles. `init` refuses to overwrite
-an existing configuration. Saved jobs and authentication live in the adjacent
+Choose the folder containing your repositories in place of `~/workspace`. Dot
+can discover committed repositories directly inside it, create new ones, and
+identify validation commands automatically. No per-project setup is required.
+For an existing configuration, set `projects.root` and `projects.discover: true`
+once and restart. `init` refuses to overwrite an existing configuration. Saved jobs and authentication live in the adjacent
 `~/.config/dotshift/.dotshift/` directory.
 
 ```sh

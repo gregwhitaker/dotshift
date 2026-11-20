@@ -46,12 +46,12 @@ type repoOut struct {
 type createProjectIn struct {
 	Name        string `json:"name" jsonschema:"new folder and repo name: 1-64 lowercase letters, digits, - or _, starting with a letter or digit; created directly inside the configured projects.root"`
 	Description string `json:"description,omitempty" jsonschema:"short project description for the initial README; provide the full objective and acceptance criteria separately to start_goal"`
-	TestProfile string `json:"test_profile" jsonschema:"name from list_repos.projects.test_profiles; the coding agent must implement real tests for its command"`
+	TestProfile string `json:"test_profile,omitempty" jsonschema:"optional configured test profile; defaults to auto test discovery, or the sole configured profile; the agent implements meaningful tests"`
 }
 
 type registerProjectIn struct {
 	Name        string `json:"name" jsonschema:"existing Git repository folder directly inside projects.root; must have an initial commit; paths and symlinks are not accepted"`
-	TestProfile string `json:"test_profile" jsonschema:"name from list_repos.projects.test_profiles"`
+	TestProfile string `json:"test_profile,omitempty" jsonschema:"optional configured test profile; defaults to auto, or the sole configured profile"`
 }
 
 type projectOut struct {
@@ -60,6 +60,7 @@ type projectOut struct {
 }
 
 type startTaskIn struct {
+	Title        string `json:"title,omitempty" jsonschema:"short user-facing name for the requested change, at most 120 characters, e.g. Add search to House Manual; describe the outcome, not agent instructions"`
 	RequestID    string `json:"request_id,omitempty" jsonschema:"unique identifier for this requested change; reuse the same value and arguments if the connection drops, to recover the original task without starting duplicate work"`
 	Repo         string `json:"repo,omitempty" jsonschema:"name of the repo from list_repos; may be left out when only one repo is allowed"`
 	Instructions string `json:"instructions" jsonschema:"what the coding agent should do, in plain language, with enough detail to work without asking"`
@@ -78,12 +79,14 @@ type taskResultIn struct {
 }
 
 type sendInputIn struct {
+	Title     string `json:"title,omitempty" jsonschema:"optional short name for this follow-up, at most 120 characters; it remains grouped with the original request"`
 	RequestID string `json:"request_id,omitempty" jsonschema:"unique identifier for this follow-up; reuse the same value and arguments when retrying a dropped connection"`
 	TaskID    string `json:"task_id" jsonschema:"the finished task to follow up on"`
 	Input     string `json:"input" jsonschema:"the answer to the agent's question, or further instructions"`
 }
 
 type startGoalIn struct {
+	Title         string   `json:"title,omitempty" jsonschema:"short user-facing name for the requested outcome, at most 120 characters, e.g. Build a household notebook"`
 	RequestID     string   `json:"request_id,omitempty" jsonschema:"unique identifier for this requested change; reuse the same value and arguments if the connection drops, to recover the original task without starting duplicate work"`
 	Repo          string   `json:"repo,omitempty" jsonschema:"allowlisted repo name; optional when only one repo is configured"`
 	Goal          string   `json:"goal" jsonschema:"the complete project objective and acceptance criteria to pursue autonomously"`
@@ -112,6 +115,7 @@ type resumeGoalIn struct {
 // taskOut is a job as MCP clients see it. Fields that don't apply are left out.
 type taskOut struct {
 	TaskID    string `json:"task_id"`
+	Title     string `json:"title"`
 	RequestID string `json:"request_id,omitempty"`
 	Status    string `json:"status"`
 	// Finished is true once the status will not change again.
@@ -143,8 +147,16 @@ type taskOut struct {
 	// DiffTruncated is true when Diff was cut short.
 	DiffTruncated bool `json:"diff_truncated,omitempty"`
 	// Next says what the client can do now.
-	Next string             `json:"next,omitempty"`
-	Goal *jobs.GoalProgress `json:"goal,omitempty"`
+	Next     string             `json:"next,omitempty"`
+	Goal     *jobs.GoalProgress `json:"goal,omitempty"`
+	Delivery *jobs.Delivery     `json:"delivery,omitempty"`
+}
+
+type applyTaskIn struct {
+	TaskID       string `json:"task_id" jsonschema:"completed task whose tested and reviewed changes the user wants applied locally"`
+	Commit       string `json:"commit" jsonschema:"exact delivery.commit returned by task_result"`
+	TargetBranch string `json:"target_branch" jsonschema:"delivery.target_branch from task_result; must be the user's intended destination"`
+	ExpectedHead string `json:"expected_head" jsonschema:"delivery.target_head from task_result; refuses to apply if the destination moved"`
 }
 
 type cancelOut struct {
@@ -161,14 +173,18 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 	s := mcp.NewServer(&mcp.Implementation{Name: "dotshift", Title: "dotshift", Version: Version}, &mcp.ServerOptions{
 		Instructions: "dotshift runs coding tasks on the user's own machine, in git repositories they allowed, " +
 			"with the coding agent and models they chose. Each task works on its own new git branch and never " +
-			"touches the user's working copy. Call list_repos first. When projects.enabled is true, " +
+			"touches the user's working copy during coding. Call list_repos first and choose the repository from the user's request. " +
+			"With projects.discover enabled, existing committed repositories directly under the authorized workspace are already usable; no registration or per-project setup is needed. " +
+			"Use the configured defaults for models, review and tests unless the user requests an override. Do not ask the user to manage project records, test profiles, models or iterations. " +
+			"Supply a short, recognizable title for new work. Keep related changes linked with send_input so the monitor can show one request and its history. " +
+			"When projects.enabled is true, " +
 			"use create_project to start a new project, or register_project for an existing committed repository directly inside projects.root. " +
-			"Choose a test_profile from the catalog. Creation seeds a README and initial commit; it does not build the application. " +
+			"Omit test_profile for automatic validation when available. Creation seeds a README and initial commit; it does not build the application. " +
 			"Then call start_goal with the returned project name, the user's objective, and concrete acceptance criteria, including real tests. " +
 			"start_task, start_goal, and send_input all use the same autonomous coding, tests, model fallback, and separate read-only review loop; the repo must have tests configured. " +
 			"Work persists and resumes when the service restarts. Supply a unique request_id for each new change and reuse it unchanged when retrying a submission after a connection failure. " +
 			"Use list_tasks to recover task IDs after reconnecting instead of submitting the work again. " +
-			"Call list_strategies to select a goal's model policy and see observed model availability. " +
+			"Call list_strategies only for a requested model override or to investigate observed model availability. " +
 			"The strategy catalog reports execution_mode: api or subscription. In subscription mode the official CLIs use the user's saved sign-ins; there is no API fallback. " +
 			"Use prefer_openai to switch from OpenAI to Anthropic on observed limits. Subscription mode waits for a known reset, or blocks for retry_unavailable if no reset time is reported. " +
 			"Use adaptive for an ordered ladder that escalates on repeated failures or stalled progress, and reviewer_model=auto for a fresh read-only completion review. " +
@@ -177,7 +193,12 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 			"Never raise or remove a spending cap to bypass a blocker without the user's authorization. " +
 			"Only set retry_unavailable after access has actually been restored. " +
 			"Poll task_status until finished is true (tasks take minutes), then task_result. If the agent's notes ask a question, " +
-			"answer a blocked task with resume_goal; use send_input for new instructions after completed work. Both continue on the same branch.",
+			"resolve routine coding questions using the user's request and resume_goal; ask the user only for missing access, a consequential decision, or authorization. " +
+			"Use send_input for new instructions after completed work. Both continue on the same branch. " +
+			"Respect explicit cancellation: leave cancelled work stopped unless the user asks to continue. " +
+			"After completion, retrieve task_result and explain the tested result. When the user's request includes applying changes locally, use apply_task with the delivery fields; this changes the original checkout. " +
+			"Do not apply when the user asked only for a proposal or separate branch. Never push or publish implicitly. If delivery reports divergence, integrate on a new task based on the current destination and test and review again. " +
+			"Preserve unrelated local changes. The user should not need the dashboard or terminal to run, follow up, recover, or apply work.",
 	})
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)}
 
@@ -238,7 +259,7 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_repos",
 		Title:       "List repos",
-		Description: "List allowed repositories, model aliases, and the project root and test profiles available for create_project and register_project.",
+		Description: "Find local repositories Dot can work in, including committed repositories discovered inside the authorized workspace. Use a returned name directly with start_task; no project management is needed. Also returns defaults and workspace creation options.",
 		Annotations: readOnly,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, listReposOut, error) {
 		out := listReposOut{Repos: []repoOut{}, DefaultModel: defaultModel, Models: models, Projects: svc.ProjectOptions()}
@@ -255,7 +276,7 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "create_project", Title: "Create a project",
-		Description: "Create a new local Git repository inside the configured project root, with a README and initial commit, and register it immediately. Never overwrites an existing path. Choose a test profile from list_repos; then call start_goal to build the project and its tests. Makes no model calls and publishes nothing.",
+		Description: "Prepare a new local repository inside the authorized workspace. Omit test_profile to use automatic test discovery when configured. Never overwrites an existing path. Then call start_task or start_goal to build the application and real tests. Makes no model calls and publishes nothing.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in createProjectIn) (*mcp.CallToolResult, projectOut, error) {
 		project, err := svc.CreateProject(ctx, jobs.ProjectRequest{Name: in.Name, Description: in.Description, TestProfile: in.TestProfile})
@@ -288,8 +309,8 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in startGoalIn) (*mcp.CallToolResult, taskOut, error) {
 		j, err := svc.Submit(ctx, jobs.Request{
-			RequestID: in.RequestID,
-			Repo:      in.Repo, Prompt: in.Goal, Model: in.Model, Branch: in.Branch, Base: in.Base,
+			RequestID: in.RequestID, Title: in.Title,
+			Repo: in.Repo, Prompt: in.Goal, Model: in.Model, Branch: in.Branch, Base: in.Base,
 			Goal: true, MaxIterations: in.MaxIterations,
 			Strategy: in.Strategy, ReviewerModel: in.ReviewerModel, EscalateAfter: in.EscalateAfter, MaxCostUSD: in.MaxCostUSD,
 		})
@@ -329,7 +350,7 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 		Description: "Start coding on a new local branch using the configured model selection, automatic fallback, tests, and a separate read-only review. Repeats fixes until reviewed completion or a blocker. Requires configured tests. Returns a task_id immediately; nothing is pushed. Supply request_id and reuse it unchanged on a connection retry.",
 		Annotations: &mcp.ToolAnnotations{Title: "Start a coding task", DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in startTaskIn) (*mcp.CallToolResult, taskOut, error) {
-		j, err := svc.Submit(ctx, jobs.Request{RequestID: in.RequestID, Repo: in.Repo, Prompt: in.Instructions, Model: in.Model, Branch: in.Branch, Base: in.Base})
+		j, err := svc.Submit(ctx, jobs.Request{RequestID: in.RequestID, Title: in.Title, Repo: in.Repo, Prompt: in.Instructions, Model: in.Model, Branch: in.Branch, Base: in.Base})
 		if err != nil {
 			logf("start_task refused: %v", err)
 			return nil, taskOut{}, err
@@ -359,6 +380,9 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 		}
 		if j.Goal != nil && j.Status == jobs.Blocked {
 			out.Next = "The goal needs input. Inspect error and goal.report, then call resume_goal after resolving the blocker."
+		}
+		if j.Status == jobs.Cancelled {
+			out.Next = "Work was cancelled and is saved. Leave it stopped unless the user asks to continue; then use resume_goal."
 		}
 		return nil, out, nil
 	})
@@ -390,16 +414,42 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 			}
 		}
 		switch {
+		case j.Status == jobs.Cancelled:
+			out.Next = "Work was cancelled and is saved. Leave it stopped unless the user asks to continue; then use resume_goal."
 		case j.Goal != nil && j.Status != jobs.Done:
 			out.Next = "The goal's work is preserved. Resolve the reported issue and call resume_goal to continue on the same branch."
+		case j.Status == jobs.Done && j.TestResult == "failed":
+			out.Next = "Validation failed; this result is not ready to apply. Inspect test_output and use send_input to fix and verify the saved work on the same branch."
+		case j.Status == jobs.Done && !jobs.Reviewed(j):
+			out.Next = "This saved result has no recorded completion review. Before applying it, use send_input to verify tests and perform an independent review. Do not describe it as tested and reviewed based only on its finished status."
 		case j.Status == jobs.Done && j.Commits > 0:
-			out.Next = fmt.Sprintf("The work is on branch %s in the user's local repo. To ask for changes or answer the agent, use send_input.", j.Branch)
+			out.Delivery, err = svc.Delivery(ctx, j.ID)
+			if err != nil {
+				return nil, taskOut{}, err
+			}
+			switch {
+			case out.Delivery.Applied:
+				out.Next = "These tested and reviewed changes are already in the local checkout. Use send_input for requested follow-ups."
+			case out.Delivery.Ready:
+				out.Next = fmt.Sprintf("Tested and reviewed work is saved separately on branch %s, ready to apply. Use send_input for follow-ups. If the user's request includes applying changes locally, call apply_task with the exact delivery fields. Preserve unrelated local work and never push implicitly.", j.Branch)
+			default:
+				out.Next = "Tested and reviewed changes are saved but have not been applied. Inspect delivery.blocker before attempting application; preserve local edits and resolve routine integration work through Dot."
+			}
 		case j.Status == jobs.Done:
-			out.Next = "The agent made no changes. Its notes say why; send_input can follow up."
+			out.Next = "Tests and independent review passed. No code changes were needed; the notes explain the result."
 		default:
-			out.Next = "The task did not finish. Start a new task, or after the user cleans up the worktree, follow up with send_input."
+			out.Next = "The task did not finish. Inspect the saved work and recover through the task tools, preserving local changes. Ask the user only for missing access or a consequential decision."
 		}
 		return nil, out, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "apply_task", Title: "Apply reviewed changes locally",
+		Description: "When the user wants the completed changes applied, fast-forward their clean local checkout to the exact tested and independently reviewed commit. First retrieve task_result and use its delivery fields. Refuses dirty, diverged, moved, or unreviewed work. Never switches branches, stashes, resets, or pushes. Safe to retry unchanged after a lost response.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(false), IdempotentHint: true},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in applyTaskIn) (*mcp.CallToolResult, *jobs.Delivery, error) {
+		result, err := svc.Apply(ctx, jobs.ApplyRequest{ID: in.TaskID, Commit: in.Commit, TargetBranch: in.TargetBranch, ExpectedHead: in.ExpectedHead})
+		return nil, result, err
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -410,7 +460,7 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 			"Use resume_goal for blocked work. Returns a new task_id; reuse request_id and unchanged arguments on a connection retry.",
 		Annotations: &mcp.ToolAnnotations{Title: "Follow up on a task", DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sendInputIn) (*mcp.CallToolResult, taskOut, error) {
-		j, err := svc.Submit(ctx, jobs.Request{RequestID: in.RequestID, Continue: in.TaskID, Prompt: in.Input})
+		j, err := svc.Submit(ctx, jobs.Request{RequestID: in.RequestID, Title: in.Title, Continue: in.TaskID, Prompt: in.Input})
 		if err != nil {
 			logf("send_input refused: %v", err)
 			return nil, taskOut{}, err
@@ -439,8 +489,8 @@ func NewServer(svc jobs.Service, defaultModel string, models []string, logf func
 
 func describe(j *jobs.Job) taskOut {
 	out := taskOut{
-		RequestID: j.RequestID,
-		TaskID:    j.ID, Status: string(j.Status), Finished: j.Status.Terminal(),
+		RequestID: j.RequestID, Title: jobs.DisplayTitle(j),
+		TaskID: j.ID, Status: string(j.Status), Finished: j.Status.Terminal(),
 		WaitingForInput: j.Status == jobs.WaitingInput || j.Status == jobs.Blocked,
 		Repo:            j.Repo, Branch: j.Branch, Model: j.Model, Instructions: j.Prompt, FollowsUp: j.Parent,
 		CreatedAt: stamp(j.CreatedAt), StartedAt: stamp(j.StartedAt), FinishedAt: stamp(j.FinishedAt),

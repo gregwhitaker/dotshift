@@ -26,6 +26,7 @@ type Service interface {
 	Strategies(context.Context) (*jobs.StrategyCatalog, error)
 	List(context.Context) ([]*jobs.Job, error)
 	Get(context.Context, string) (*jobs.Job, error)
+	Delivery(context.Context, string) (*jobs.Delivery, error)
 	Cancel(context.Context, string) error
 	ResumeGoal(context.Context, jobs.ResumeGoalRequest) (*jobs.Job, error)
 	SetAttentionDismissed(context.Context, string, string, bool) (*jobs.Job, error)
@@ -38,6 +39,7 @@ type Options struct {
 	ExecutionMode string
 	DefaultModel  string
 	MCPEnabled    bool
+	Readiness     ReadinessService
 	Stop          func()
 }
 
@@ -72,6 +74,13 @@ func (s *Server) Close(ctx context.Context) error { return s.http.Shutdown(ctx) 
 
 type jobView struct {
 	ID                 string             `json:"id"`
+	Title              string             `json:"title"`
+	Parent             string             `json:"parent,omitempty"`
+	WorkID             string             `json:"work_id"`
+	WorkTitle          string             `json:"work_title"`
+	CurrentID          string             `json:"current_id"`
+	ResolvedBy         string             `json:"resolved_by,omitempty"`
+	Display            workState          `json:"display"`
 	Repo               string             `json:"repo"`
 	Prompt             string             `json:"prompt"`
 	Model              string             `json:"model"`
@@ -89,6 +98,7 @@ type jobView struct {
 	StartedAt          *time.Time         `json:"started_at"`
 	FinishedAt         *time.Time         `json:"finished_at"`
 	Goal               *jobs.GoalProgress `json:"goal"`
+	Delivery           *jobs.Delivery     `json:"delivery,omitempty"`
 	AttentionVersion   string             `json:"attention_version"`
 	AttentionDismissed bool               `json:"attention_dismissed"`
 }
@@ -99,6 +109,7 @@ func describe(j *jobs.Job, detail bool) jobView {
 		mode = "api"
 	}
 	v := jobView{ID: j.ID, Repo: j.Repo, Prompt: j.Prompt, Model: j.Model, ExecutionMode: mode, Branch: j.Branch, BaseCommit: j.BaseCommit, Status: j.Status, Error: j.Error, Summary: j.Summary, Commits: j.Commits, DiffStat: j.DiffStat, TestResult: j.TestResult, CreatedAt: j.CreatedAt, Goal: j.Goal}
+	v.Title, v.Parent = jobs.DisplayTitle(j), j.Parent
 	v.AttentionVersion, v.AttentionDismissed = j.AttentionVersion(), j.AttentionDismissed()
 	if !j.StartedAt.IsZero() {
 		v.StartedAt = &j.StartedAt
@@ -114,6 +125,7 @@ func describe(j *jobs.Job, detail bool) jobView {
 
 func newHandler(o Options, record Record) http.Handler {
 	started := time.Now().UTC()
+	presentation := newPresenter(o.Jobs)
 	cookieName := "dotshift_" + record.Instance
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/models", func(w http.ResponseWriter, r *http.Request) {
@@ -125,8 +137,26 @@ func newHandler(o Options, record Record) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"default_model": o.DefaultModel, "strategies": catalog})
 	})
 	mux.HandleFunc("GET /api/info", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"instance": record.Instance, "config_path": record.ConfigPath, "execution_mode": o.ExecutionMode, "mcp_enabled": o.MCPEnabled, "started_at": started})
+		var readiness *Readiness
+		if o.Readiness != nil {
+			readiness = o.Readiness.Current()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"instance": record.Instance, "config_path": record.ConfigPath, "execution_mode": o.ExecutionMode, "mcp_enabled": o.MCPEnabled, "started_at": started, "readiness": readiness})
 	})
+	checkReadiness := func(w http.ResponseWriter, r *http.Request) {
+		if o.Readiness == nil {
+			writeError(w, http.StatusServiceUnavailable, "Connection checks are unavailable. Reopen Local Work from the Dotshift menu.")
+			return
+		}
+		state, err := o.Readiness.Check(r.Context(), r.Method == http.MethodPost)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "Could not finish checking the connection. Try again.")
+			return
+		}
+		writeJSON(w, http.StatusOK, state)
+	}
+	mux.HandleFunc("GET /api/readiness", checkReadiness)
+	mux.HandleFunc("POST /api/readiness/check", checkReadiness)
 	mux.HandleFunc("POST /api/session", func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: cookieName, Value: record.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -143,11 +173,7 @@ func newHandler(o Options, record Record) http.Handler {
 			fail(w, err)
 			return
 		}
-		out := make([]jobView, 0, len(list))
-		for _, j := range list {
-			out = append(out, describe(j, false))
-		}
-		writeJSON(w, http.StatusOK, out)
+		writeJSON(w, http.StatusOK, presentation.views(r.Context(), list, ""))
 	})
 	get := func(w http.ResponseWriter, r *http.Request) *jobs.Job {
 		j, err := o.Jobs.Get(r.Context(), r.PathValue("id"))
@@ -162,7 +188,12 @@ func newHandler(o Options, record Record) http.Handler {
 		if j == nil {
 			return
 		}
-		writeJSON(w, http.StatusOK, describe(j, true))
+		view, err := presentation.view(r.Context(), j)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, view)
 	})
 	mux.HandleFunc("GET /api/jobs/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
 		j := get(w, r)
@@ -214,7 +245,12 @@ func newHandler(o Options, record Record) http.Handler {
 			fail(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, describe(updated, true))
+		view, err := presentation.view(r.Context(), updated)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, view)
 	})
 	mux.HandleFunc("POST /api/jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		j := get(w, r)

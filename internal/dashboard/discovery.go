@@ -95,12 +95,18 @@ func Discover(ctx context.Context, dir, configPath string) (*Record, error) {
 
 // Request sends an authenticated local control request, without proxies or redirects.
 func (r Record) Request(ctx context.Context, method, path string) (*http.Response, error) {
+	return r.RequestWithTimeout(ctx, method, path, 2*time.Second)
+}
+
+// RequestWithTimeout lets explicit, read-only diagnostics wait for bounded
+// CLI checks without slowing down ordinary service discovery and polling.
+func (r Record) RequestWithTimeout(ctx context.Context, method, path string, timeout time.Duration) (*http.Response, error) {
 	request, err := http.NewRequestWithContext(ctx, method, r.URL+path, strings.NewReader("{}"))
 	if err != nil {
 		return nil, err
 	}
 	request.Header.Set("Authorization", "Bearer "+r.Token)
 	request.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return client.Do(request)
 }

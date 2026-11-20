@@ -21,7 +21,7 @@ const authDB = "auth.db"
 
 // startIntake attaches MCP to the shared runner. Its lifetime is independent
 // of the dashboard, and disabling MCP does not disable goal recovery.
-func startIntake(cfg *config.Config, runner *jobs.Runner, dir string) (func(), error) {
+func startIntake(cfg *config.Config, runner *jobs.Runner, dir string, onAuthenticated func()) (func(), error) {
 	if cfg.MCP.Disabled {
 		fmt.Println("MCP intake is off (mcp.disabled in the config).")
 		return func() {}, nil
@@ -50,6 +50,7 @@ func startIntake(cfg *config.Config, runner *jobs.Runner, dir string) (func(), e
 	handler, err := mcpintake.NewHandler(mcpintake.Options{
 		Jobs: runner, DefaultModel: cfg.Jobs.Model, Models: cfg.AliasNames(),
 		Auth: authStore, Passcode: passcode, PublicURL: publicURL, Logf: logLine,
+		OnAuthenticated: onAuthenticated,
 	})
 	if err != nil {
 		closeAll()

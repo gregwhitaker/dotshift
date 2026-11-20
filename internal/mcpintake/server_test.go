@@ -217,7 +217,7 @@ func TestToolsOverOAuth(t *testing.T) {
 			for _, tool := range tools.Tools {
 				names = append(names, tool.Name)
 			}
-			if got := strings.Join(names, ","); got != "cancel_task,create_project,list_repos,list_strategies,list_tasks,register_project,resume_goal,send_input,start_goal,start_task,task_result,task_status" {
+			if got := strings.Join(names, ","); got != "apply_task,cancel_task,create_project,list_repos,list_strategies,list_tasks,register_project,resume_goal,send_input,start_goal,start_task,task_result,task_status" {
 				t.Fatalf("tools = %s", got)
 			}
 

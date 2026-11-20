@@ -4,7 +4,7 @@
 
 | Tool | What it does |
 | --- | --- |
-| `list_repos` | Lists allowed repos, model aliases, and the project root and test profiles |
+| `list_repos` | Discovers usable repositories in the authorized workspace, plus defaults and creation options |
 | `create_project` | Creates and registers a new local Git project ready for `start_goal` |
 | `register_project` | Registers an existing committed Git repository inside the project root |
 | `list_strategies` | Lists execution mode, spending-cap support, model policies, eligible aliases, and observed availability |
@@ -12,14 +12,43 @@
 | `start_goal` | Starts a persistent project goal with autonomous coding, testing, fixes, and completion review |
 | `list_tasks` | Recovers recent task IDs and status after reconnecting; supports repo and unfinished-work filters |
 | `task_status` | Status, the end of the agent's output while it runs, its notes when done |
-| `task_result` | Notes, branch, commits, diffstat, test result, and the diff if asked |
+| `task_result` | Notes, branch, commits, tests, optional diff, and delivery readiness |
+| `apply_task` | Explicitly fast-forwards a clean local checkout to the exact tested and reviewed result; never pushes |
 | `send_input` | Follows up on completed work on the same branch, preserving context, model policy, fallback, tests, and separate review |
 | `resume_goal` | Continues a blocked or cancelled goal, with optional input, model or strategy change, retry after allowance resets/access is restored, or iteration limit |
 | `cancel_task` | Stops a running task |
 
-The tools go through the same job runner as `dotshift run`, so the same
-allowlist applies: a task can only run in a repo under `repos:` or a registered
-project inside `projects.root`, and only on a new branch in its own worktree.
+The tools use the same runner as `dotshift run`. A job can run in an explicitly
+allowed repository, a registered project, or a committed repository discovered
+directly inside `projects.root` when `projects.discover: true`. Coding happens
+in its own worktree on a separate branch. Applying the result is a separate,
+explicit `apply_task` operation on the original checkout.
+
+The everyday path is `list_repos` → `start_task` → `task_status` → `task_result`
+→ `apply_task` when the user wants the changes applied locally. Dot chooses the
+repository from the request and uses configured model and validation defaults.
+For a new app, call `create_project` first; its test profile is optional and
+defaults to `auto` when available. No dashboard, project form, model picker or
+iteration control is required. The agent creates or repairs tests when automatic
+validation finds no test command.
+
+Supply a short `title` for `start_task` and `start_goal`, such as "Add search to
+House Manual". `send_input` also accepts an optional title for the follow-up.
+Titles are display metadata, separate from the full instructions; older clients
+can omit them. Keep follow-ups linked with `send_input` so the monitor can show
+one request with its history. The user never names or manages these records.
+
+Use `list_strategies` for an explicit preference or to diagnose availability.
+Use `send_input` for follow-ups and `resume_goal` for blocked or cancelled work.
+Resolve routine coding decisions from the conversation; ask the user when
+access, authorization or a consequential product decision is missing.
+
+For `apply_task`, first read `task_result.delivery` and pass `commit`,
+`target_branch`, and `target_head` (as `expected_head`) unchanged. The result
+must have passed validation and independent review. Local edits, divergent
+history, a changed result, or a moved destination prevent application. Dot can
+prepare a fresh tested integration task for divergence; it must preserve local
+edits and must not push or publish implicitly.
 
 For `start_task`, `start_goal`, and `send_input`, provide a unique `request_id`
 for each requested change. If the connection drops, retry with the same ID

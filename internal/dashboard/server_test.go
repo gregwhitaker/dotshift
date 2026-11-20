@@ -16,21 +16,44 @@ import (
 )
 
 type fakeService struct {
-	job       *jobs.Job
-	resumed   *jobs.ResumeGoalRequest
-	cancelled string
+	job           *jobs.Job
+	resumed       *jobs.ResumeGoalRequest
+	cancelled     string
+	jobs          []*jobs.Job
+	deliveries    map[string]*jobs.Delivery
+	deliveryCalls int
 }
 
 func (f *fakeService) Strategies(context.Context) (*jobs.StrategyCatalog, error) {
 	return &jobs.StrategyCatalog{ExecutionMode: "subscription", DefaultStrategy: "alias", Strategies: []jobs.StrategyInfo{}}, nil
 }
 
-func (f *fakeService) List(context.Context) ([]*jobs.Job, error) { return []*jobs.Job{f.job}, nil }
+func (f *fakeService) List(context.Context) ([]*jobs.Job, error) {
+	if f.jobs != nil {
+		return append([]*jobs.Job(nil), f.jobs...), nil
+	}
+	return []*jobs.Job{f.job}, nil
+}
 func (f *fakeService) Get(_ context.Context, id string) (*jobs.Job, error) {
+	for _, j := range f.jobs {
+		if j.ID == id {
+			return j, nil
+		}
+	}
+	if f.job == nil {
+		return nil, jobs.ErrNotFound
+	}
 	if id != f.job.ID {
 		return nil, jobs.ErrNotFound
 	}
 	return f.job, nil
+}
+func (f *fakeService) Delivery(_ context.Context, id string) (*jobs.Delivery, error) {
+	f.deliveryCalls++
+	if value, ok := f.deliveries[id]; ok {
+		return value, nil
+	}
+	return &jobs.Delivery{TaskID: id, Applied: true}, nil
 }
 func (f *fakeService) Cancel(_ context.Context, id string) error { f.cancelled = id; return nil }
 func (f *fakeService) ResumeGoal(_ context.Context, r jobs.ResumeGoalRequest) (*jobs.Job, error) {

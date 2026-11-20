@@ -212,7 +212,7 @@ esac
 
 func TestSubmissionRetrySurvivesReconnectAndRejectsDifferentWork(t *testing.T) {
 	r, _ := setup(t, "goal_finish", "test -f hello.txt")
-	req := Request{RequestID: "one-user-change", Prompt: "Finish this change"}
+	req := Request{RequestID: "one-user-change", Title: "Finish the local change", Prompt: "Finish this change"}
 	var wg sync.WaitGroup
 	ids := make(chan string, 8)
 	for range 8 {
@@ -246,7 +246,7 @@ func TestSubmissionRetrySurvivesReconnectAndRejectsDifferentWork(t *testing.T) {
 	// A catalog change cannot prevent replay of an already accepted request.
 	next.Config.Repos["second"] = next.Config.Repos["demo"]
 	replayed, err := next.Submit(context.Background(), req)
-	if err != nil || replayed.ID != id || replayed.Status != Done {
+	if err != nil || replayed.ID != id || replayed.Status != Done || replayed.Title != req.Title {
 		t.Fatalf("replay after reconnect: %+v, %v", replayed, err)
 	}
 	req.Prompt = "Different work"

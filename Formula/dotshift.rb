@@ -35,11 +35,12 @@ class Dotshift < Formula
     <<~EOS
       Create your configuration and sign in to Codex and Claude Code:
         mkdir -p ~/.config/dotshift
-        dotshift init -config ~/.config/dotshift/dotshift.yaml
+        dotshift init -config ~/.config/dotshift/dotshift.yaml -workspace ~/workspace
         codex login
         claude auth login
 
-      Add your repositories and test commands to that configuration, then run:
+      Choose the folder containing your repositories in place of ~/workspace.
+      Dot discovers repositories and test commands there. Then run:
         dotshift check -config ~/.config/dotshift/dotshift.yaml
         dotshift ui -config ~/.config/dotshift/dotshift.yaml
 

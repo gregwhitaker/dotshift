@@ -180,8 +180,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
 
     private func rebuildMenu() {
         let attention = snapshot?.attention.count ?? 0
-        let state = busy ?? (errorMessage != nil ? "Unavailable" : configuration == nil ? "Choose configuration" : snapshot == nil ? "Connecting…" : snapshot!.running ? "Running" : "Stopped")
-        let needsAttention = attention > 0 || errorMessage != nil
+        let state = busy ?? (errorMessage != nil ? "Unavailable" : configuration == nil ? "Choose configuration" : snapshot == nil ? "Connecting…" : snapshot!.running ? snapshot!.readiness?.label ?? "Checking local access…" : "Stopped")
+        let needsAttention = attention > 0 || errorMessage != nil || snapshot?.readiness?.needsAttention == true
         statusItem.button?.image = MenuBarIcon.image(attention: needsAttention)
         attentionDot.isHidden = !needsAttention
         attentionDot.needsDisplay = true
@@ -196,8 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         if errorMessage != nil { menu.addItem(item("Show Connection Error…", action: #selector(showLastError))) }
         menu.addItem(.separator())
         let usable = configuration != nil && busy == nil
-        menu.addItem(item("Open Dashboard…", action: #selector(openRoute), value: "/", enabled: usable, key: "o"))
-        menu.addItem(item("Models…", action: #selector(openRoute), value: "/models", enabled: usable))
+        menu.addItem(item("Open Local Work…", action: #selector(openRoute), value: "/", enabled: usable, key: "o"))
         menu.addItem(.separator())
         addWorkMenu("Needs Attention (\(attention))", work: snapshot?.attention ?? [], empty: "Nothing needs attention", filter: "attention")
         addWorkMenu("Active Work (\(snapshot?.active.count ?? 0))", work: snapshot?.active ?? [], empty: "No active work", filter: "active")
@@ -383,7 +382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         let key = event.kind == .completed ? "notifyCompleted" : "notifyAttention"
         guard defaults.bool(forKey: key), let configuration else { return }
         let content = UNMutableNotificationContent()
-        content.title = event.kind == .completed ? "Work completed · \(event.work.repo)" : "Needs attention · \(event.work.repo)"
+        content.title = "\(event.work.phase) · \(event.work.repo)"
         content.body = event.work.title
         content.sound = .default
         content.userInfo = ["route": event.work.route, "config": configuration.config]

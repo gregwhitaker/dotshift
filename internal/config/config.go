@@ -72,7 +72,10 @@ type Repo struct {
 // Projects is the local policy for repositories managed through MCP. Clients
 // choose a test profile, not an arbitrary host shell command.
 type Projects struct {
-	Root         string            `yaml:"root"`
+	Root string `yaml:"root"`
+	// Discover permits coding in committed repositories directly under Root
+	// without registering each one. Existing configurations remain opt-in.
+	Discover     bool              `yaml:"discover"`
 	TestProfiles map[string]string `yaml:"test_profiles"`
 }
 
@@ -214,6 +217,9 @@ func Parse(data []byte) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
+	if c.Projects.Root != "" && c.Projects.TestProfiles == nil {
+		c.Projects.TestProfiles = map[string]string{"auto": "auto"}
+	}
 	if c.Jobs.Mode == "" {
 		c.Jobs.Mode = ModeAPI
 	}

@@ -8,6 +8,9 @@ import (
 
 func (p Projects) validate() []string {
 	var errs []string
+	if p.Discover && p.Root == "" {
+		errs = append(errs, "projects.root is required when projects.discover is enabled")
+	}
 	if p.Root != "" && !filepath.IsAbs(p.Root) && !strings.HasPrefix(p.Root, "~/") {
 		errs = append(errs, "projects.root must be an absolute path or start with ~/")
 	}

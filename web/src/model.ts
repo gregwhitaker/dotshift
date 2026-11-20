@@ -30,6 +30,20 @@ export type Goal = {
 };
 export type Job = {
   id: string;
+  title?: string;
+  parent?: string;
+  work_id?: string;
+  work_title?: string;
+  current_id?: string;
+  resolved_by?: string;
+  display?: {
+    kind: string;
+    label: string;
+    detail: string;
+    attention: boolean;
+    completed: boolean;
+    message?: string;
+  };
   repo: string;
   prompt: string;
   model: string;
@@ -47,6 +61,7 @@ export type Job = {
   started_at: string | null;
   finished_at: string | null;
   goal: Goal | null;
+  delivery?: { ready: boolean; applied: boolean; blocker?: string; blocker_code?: string };
   attention_version: string;
   attention_dismissed: boolean;
 };
@@ -60,9 +75,11 @@ export function filterFromSearch(search: string): Filter {
 export const active = (job: Job) =>
   job.status === "queued" || job.status === "running";
 export const attention = (job: Job) =>
-  !job.attention_dismissed &&
-  (["blocked", "failed", "waiting_input"].includes(job.status) ||
-    (job.status === "done" && job.test_result === "failed"));
+  !job.attention_dismissed && !job.resolved_by &&
+  (job.display?.attention ?? (["blocked", "failed", "waiting_input"].includes(job.status) ||
+    (job.status === "done" && job.test_result === "failed")));
+export const currentWork = (jobs: Job[]) => jobs.filter(job => !job.current_id || job.current_id === job.id);
+export const completed = (job: Job) => job.display?.completed ?? (job.status === "done" && job.test_result !== "failed");
 export const resumable = (job: Job) =>
   !!job.goal && ["blocked", "cancelled", "failed"].includes(job.status);
 export const waiting = (job: Job) =>
@@ -70,7 +87,33 @@ export const waiting = (job: Job) =>
     ? job.goal?.reviewer_selection?.waiting_until ||
       job.goal?.model_selection?.waiting_until
     : job.goal?.model_selection?.waiting_until;
+
+export function prioritizeJobs(jobs: Job[]) {
+  const rank = (job: Job) => attention(job) ? 0 : active(job) ? 1 : 2;
+  return [...jobs].sort((a, b) => rank(a) - rank(b) || Date.parse(b.created_at) - Date.parse(a.created_at));
+}
+
+export function progressText(job: Job): string {
+  if (job.display) {
+    const labels: Record<string, string> = {
+      ready: "Tests and review passed · saved separately",
+      applied: "Tests and review passed · in your local app",
+      verified: "Tests and review passed · no changes needed",
+      delivery_blocked: "Changes saved · local checkout needs checking",
+      unverified: "Saved result · review not recorded",
+    };
+    const text = labels[job.display.kind] || job.display.detail;
+    return text.length > 130 ? text.slice(0, 127).trimEnd() + "…" : text;
+  }
+  if (attention(job)) return "Progress saved · Dot can help continue";
+  if (active(job) && waiting(job)) return "Will retry automatically";
+  if (active(job)) return "Working locally";
+  if (job.status === "done" && job.test_result === "passed") return "Tests passed";
+  if (job.status === "cancelled") return "Stopped · progress saved";
+  return "Saved locally";
+}
 export function statusLabel(job: Job) {
+  if (job.display) return job.display.label;
   if (job.status === "done" && job.test_result === "failed")
     return "Tests failed";
   if (job.status === "running" && waiting(job)) return "Waiting for model";
@@ -98,20 +141,28 @@ export function selectJobs(
   query: string,
 ) {
   const term = query.trim().toLowerCase();
-  return jobs.filter(
+  return currentWork(jobs).filter(
     (job) =>
       (!repo || job.repo === repo) &&
       (filter === "all" ||
         (filter === "active" && active(job)) ||
         (filter === "attention" && attention(job)) ||
-        (filter === "done" && job.status === "done")) &&
-      `${job.prompt} ${job.repo} ${job.id} ${job.branch} ${job.model}`
-        .toLowerCase()
-        .includes(term),
+        (filter === "done" && completed(job))) &&
+      jobs.some(entry => (entry.id === job.id || (!!job.work_id && entry.work_id === job.work_id)) &&
+        `${entry.title || ""} ${entry.work_title || ""} ${entry.prompt} ${entry.repo} ${entry.id} ${entry.branch}`.toLowerCase().includes(term)),
   );
 }
-export const title = (job: Job) =>
-  job.prompt.trim().split("\n")[0] || "Untitled job";
+export function title(job: Job) {
+  const text = job.title || job.prompt.trim().split("\n")[0] || "Local coding request";
+  return text.length > 80 ? text.slice(0, 77).trimEnd() + "…" : text;
+}
+export const workTitle = (job: Job) => job.work_title || title(job);
+export const badgeClass = (job: Job) => {
+  if (job.test_result === "failed" && job.status === "done") return "failed";
+  if (job.display?.kind === "unverified") return "saved";
+  if (job.display?.kind === "delivery_blocked") return "blocked";
+  return job.status;
+};
 export function modelLabel(model: string) {
   if (model === "openai/default") return "Codex default";
   if (model === "anthropic/default") return "Claude default";

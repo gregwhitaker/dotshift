@@ -7,17 +7,17 @@
 
 # dotshift
 
-Local coding and review for your OpenAI Dot. Ask Dot to use dotshift on a
-project; it works on a separate branch, runs tests, fixes failures, and gets a
-fresh read-only review before marking the job complete.
+Make it easy for Dot to code autonomously on your computer. Describe a change
+in your conversation; Dotshift runs the local coding, tests, fixes, and a
+separate review. Ask Dot for follow-ups or to apply the finished changes.
 
-**The default: OpenAI codes first. When it hits an observed usage limit, Claude
-continues the same job and can finish a separate review without waiting for
-OpenAI.** Files, progress, and test results survive the switch and service restarts.
+Choose a workspace once. Dot discovers its repositories and can create new
+ones there. Test commands are discovered from the code. OpenAI runs first by
+default, with Claude taking over after an observed usage limit. Work continues
+while Dot is disconnected and survives service restarts.
 
-Dot can choose a configured model alias, fallback policy, and reviewer for each
-job. Once accepted, the job runs locally without further help from Dot. Dotshift
-controls the coding agents; Dot's own conversation stays in Dot.
+The optional app shows progress and results. You do not need it to submit work,
+manage repositories, choose models, or keep the coding loop moving.
 
 ## Set up local coding
 
@@ -38,37 +38,28 @@ accounts, and create a configuration outside Homebrew's Cellar:
 codex login
 claude auth login
 mkdir -p ~/.config/dotshift
-dotshift init -config ~/.config/dotshift/dotshift.yaml
+dotshift init -config ~/.config/dotshift/dotshift.yaml -workspace ~/workspace
 ```
 
-`init` defaults to subscription mode. Add an allowed Git repository and its
-validation command to `~/.config/dotshift/dotshift.yaml`. Keep the generated
-model choices:
+Use the folder containing your repositories in place of `~/workspace`. This
+explicitly lets Dot discover committed Git repositories directly inside that
+folder and create new ones there. Existing files stay separate during coding.
+Dot can apply a tested and reviewed result when your request calls for it.
+
+`init` defaults to subscription mode and refuses to overwrite an existing
+configuration. For an existing installation, add this once and restart:
 
 ```yaml
-aliases:
-  smart: [openai/default, anthropic/default]
-  codex: [openai/default]
-  claude: [anthropic/default]
-repos:
-  myapp:
-    path: ~/workspace/myapp
-    test: npm test
-jobs:
-  mode: subscription
-  model: smart
-  strategy: prefer_openai
-  reviewer_model: auto
-  timeout: 30m
-mcp:
-  tunnel: tailscale
+projects:
+  root: ~/workspace
+  discover: true
 ```
 
-Use the validation command appropriate for the project. Each job needs one.
-Jobs start from committed code and keep your working copy separate.
-`openai/default` and `anthropic/default` use the CLIs' default models; aliases
-can also contain explicit model names your accounts support. If needed, set
-`jobs.agent.command` and `jobs.claude_command` to absolute CLI paths.
+With no custom test profiles, validation defaults to `auto`: `make test`, a
+package's test script, Go, Cargo, or Python tests. The agent sets up meaningful
+tests and fixes validation failures. Existing explicit repository test commands
+and model preferences remain supported. See [local coding](docs/coding.md) for
+workspace boundaries and custom validation.
 
 ```sh
 dotshift check -config ~/.config/dotshift/dotshift.yaml
@@ -91,48 +82,24 @@ Keep the computer awake and connected while it works.
 
 Then ask Dot:
 
-> Use dotshift on myapp to add search, cover it with tests, and review it.
-> Use OpenAI first, then Claude if OpenAI hits its limit.
+> Use dotshift to add search to myapp, cover it with tests, and apply the
+> finished changes locally.
 
-## Keep the model choices
+Dot selects the repository, follows the work, retrieves the tested result,
+and applies it to a clean checkout when requested. A dirty or diverged checkout
+is preserved. Continue the same conversation for revisions or recovery.
 
-| Choice | How to ask Dot |
-| --- | --- |
-| OpenAI first, Claude fallback | Use `model: smart`, `strategy: prefer_openai` (the default) |
-| A particular agent or model | Choose a configured alias such as `codex` or `claude` |
-| Your own fallback order | Use `strategy: alias` with an ordered alias |
-| Escalate after repeated failures | Use `strategy: adaptive` with an alias ordered from baseline to strongest |
-| Separate review | Use `reviewer_model: auto`, or a configured reviewer alias |
+## Preferences stay optional
 
-Dot discovers these through `list_strategies`. Selection follows the chosen
-policy and observed availability. Automatic review prefers another available
-model; in subscription mode it can use the coding model in a fresh read-only
-session. An explicitly named reviewer alias requires a different model.
-See [model selection](docs/models.md) for configuration and recovery details.
+The default is OpenAI coding first, Claude fallback, and a fresh independent
+review. Tell Dot when you want a particular configured model or policy; everyday
+work uses your defaults. [Model selection](docs/models.md) covers explicit
+aliases, fallback order, and adaptive escalation.
 
-Fallback reacts to limits reported by the providers; it cannot predict remaining
-subscription tokens. If every eligible model is limited, the job waits for a
-known reset or blocks with its work saved. Installation and sign-in failures
-need to be fixed before resuming. Provider extra-usage settings still apply.
-Subscription mode does not use the API router or enforce dollar caps.
-
-## Let Dot create projects
-
-To allow new projects inside a folder, add:
-
-```yaml
-projects:
-  root: ~/workspace
-  test_profiles:
-    go: go test ./...
-    node: npm test
-    python: python3 -m unittest discover -s tests -v
-```
-
-Restart the service after configuration changes. Dot can then create a new
-repository or register an existing committed repository directly inside that
-folder, select a test profile, and start coding. Model choices apply to these
-jobs too. See [local coding](docs/coding.md) for repository and worktree details.
+Fallback responds to limits reported by the providers. It cannot predict your
+remaining subscription allowance. If all eligible models are limited, work
+waits for a known reset or blocks with progress saved. Missing sign-in or
+credentials still require you. Subscription mode does not enforce dollar caps.
 
 ## Check progress and recover work
 
@@ -143,15 +110,25 @@ dotshift jobs -config ~/.config/dotshift/dotshift.yaml TASK_ID
 dotshift logs -config ~/.config/dotshift/dotshift.yaml TASK_ID
 ```
 
-The browser is a small monitor: work, model choices, logs, tests, changes, and
-completion notes. It can cancel or resume unfinished work. Start new work with
-Dot or `dotshift run`; project creation and job submission live in the coding
-interface. Closing the browser or optional status menu leaves work running.
+The browser is an optional monitor: work in progress, issues, and completed
+results. Related follow-ups share one request and expandable history. Status
+distinguishes a tested result ready to apply from changes already applied locally.
+The readable result comes first; original instructions, tests, changes, and logs
+stay in expandable details. Stop or dismiss work here when needed.
+Ask Dot to start, continue, investigate, or apply work. Closing the browser or
+optional status menu leaves work running.
 
-To clear an issue you have reviewed, open the job and choose **Dismiss from
-attention**. It leaves the dashboard's Needs attention list and the menu bar's
+The browser and menu share a checked readiness status for local workspace,
+coding/review access, and the Dot connection. Open **Connection and help** to
+check again or find first-connection instructions. A running service alone does
+not count as a confirmed Dot connection. These checks do not start coding or
+change access; Dot handles the work once connected.
+
+Earlier failed checks move into history when a later linked result passes
+validation. To acknowledge a remaining issue manually, open **Technical details**
+and choose **Dismiss this notice**. It leaves the dashboard's Needs attention list and the menu bar's
 attention count, while keeping its status, branch, files, and history in
-**All work**. Use **Show in attention** to undo. A new failure or blocker after
+request history. Use **Show this notice again** to undo. A new failure or blocker after
 resuming needs attention again. You can also use
 `dotshift dismiss -config ~/.config/dotshift/dotshift.yaml JOB_ID`, or add
 `-undo` to restore it.
@@ -186,7 +163,7 @@ setup above; put flags before positional arguments such as job IDs.
 
 | Command | Purpose |
 | --- | --- |
-| `init` | Write subscription defaults; refuses to overwrite existing config |
+| `init [-workspace DIR]` | Authorize a workspace and write subscription defaults; refuses to overwrite existing config |
 | `serve` | Run the coding service in the foreground |
 | `service install\|uninstall` | Manage macOS login startup and crash recovery |
 | `connect` | Show Dot connection details; `-revoke` disconnects clients |

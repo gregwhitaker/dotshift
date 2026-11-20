@@ -26,23 +26,31 @@ keep the same shape and width, so neighboring menu items stay in place. The
 app bundle uses the Ink-and-blue Offset app icon. Update and relaunch the menu
 app to load updated branding.
 
-The menu shows the service state and counts of active work and work needing
-attention. **Open Dashboard** opens the work monitor; **Models** shows the configured
-aliases and policies. Start new work by asking Dot. Work submenus show up to five tasks with their current phase;
+The menu shows the service state and counts of current requests and requests needing
+attention. Linked follow-ups share one request; earlier attempts remain in the
+monitor's expandable history. The menu uses the monitor's outcome labels,
+including **Ready to apply**, **Applied locally**, and **Not applied**.
+**Open Local Work** opens the work monitor. Start new work, choose
+optional model preferences, and handle follow-ups by asking Dot. Work submenus show up to five tasks with their current phase;
 select one to open its details, or use **View All** for a filtered list.
 
-To clear a reviewed issue, select it from **Needs Attention** and click
-**Dismiss from attention** in the dashboard. The count and blue dot update on
-the next refresh. The job remains in **All work**, with its status, files, and
-history intact; **Show in attention** restores it. Resuming can produce a new
+When a later linked result passes validation, superseded failures move into
+history automatically. Unrelated successes and cancelled follow-ups do not
+resolve an earlier failure. To acknowledge a remaining issue manually, open
+**Technical details** and click **Dismiss this notice**. The count and blue dot update on
+the next refresh. The request keeps its status, files, and history;
+**Show this notice again** restores it. Resuming can produce a new
 issue that needs attention again. Dismissing work does not clear a service
 connection error or turn a failed test result into a successful completion.
 
-**Connections** checks local service status, the remote MCP health endpoint,
-subscription CLI sign-in, and observed model cooldowns. These checks make no
+**Connections** shares the browser's readiness check: the authorized workspace,
+configured coding and review access (including usable fallback and recorded limits),
+and the Dot connection. The menu title reflects this checked status. Public endpoint
+health alone does not confirm Dot access; recent authenticated contact is also
+required and its time is available in connection details. These checks make no
 model requests and do not estimate remaining subscription allowance. Work
 refreshes every five seconds; connection checks refresh every minute and can
-also be requested manually. **Service** provides explicit start, stop, restart,
+also be requested manually. Checks never restart work or change sign-ins. **Service** provides explicit start, stop, restart,
 and log actions. Stopping saves active goals for the next service start.
 
 **Settings** contains login startup, completion and attention notifications,

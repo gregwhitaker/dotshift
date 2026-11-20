@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +18,6 @@ import (
 	"github.com/gregwhitaker/dotshift/internal/agent"
 	"github.com/gregwhitaker/dotshift/internal/config"
 	"github.com/gregwhitaker/dotshift/internal/dashboard"
-	"github.com/gregwhitaker/dotshift/internal/jobs"
 )
 
 // The menu app is a client of the existing service. These read-only commands
@@ -65,11 +63,12 @@ func init() {
 }
 
 type desktopSnapshot struct {
-	Running       bool            `json:"running"`
-	ExecutionMode string          `json:"execution_mode"`
-	MCPEnabled    bool            `json:"mcp_enabled"`
-	ConfigPath    string          `json:"config_path"`
-	Jobs          json.RawMessage `json:"jobs"`
+	Running       bool                 `json:"running"`
+	ExecutionMode string               `json:"execution_mode"`
+	MCPEnabled    bool                 `json:"mcp_enabled"`
+	ConfigPath    string               `json:"config_path"`
+	Jobs          json.RawMessage      `json:"jobs"`
+	Readiness     *dashboard.Readiness `json:"readiness,omitempty"`
 }
 
 func desktopConfig(ctx context.Context, path string) (*config.Config, *dashboard.Record, string, error) {
@@ -90,7 +89,15 @@ func desktopConfig(ctx context.Context, path string) (*config.Config, *dashboard
 }
 
 func desktopRead(ctx context.Context, record *dashboard.Record, path string, out any) error {
-	response, err := record.Request(ctx, http.MethodGet, path)
+	return desktopReadMethod(ctx, record, http.MethodGet, path, out)
+}
+
+func desktopReadMethod(ctx context.Context, record *dashboard.Record, method, path string, out any) error {
+	timeout := 2 * time.Second
+	if path == "/api/readiness/check" {
+		timeout = 30 * time.Second
+	}
+	response, err := record.RequestWithTimeout(ctx, method, path, timeout)
 	if err != nil {
 		return err
 	}
@@ -133,32 +140,22 @@ func desktopConnections(ctx context.Context, path string) ([]desktopConnection, 
 	if err != nil {
 		return nil, err
 	}
-	rows := []desktopConnection{{Name: "Local service", Status: "Stopped"}}
 	if record != nil {
-		rows[0].Status = "Running"
-	}
-	if record == nil || !record.MCPEnabled {
-		rows = append(rows, desktopConnection{Name: "Remote access", Status: "Off"})
-	} else {
-		remote := desktopConnection{Name: "Remote access", Status: "Not configured"}
-		publicURL := cfg.MCP.PublicURL
-		if cfg.MCP.Tunnel == config.TunnelTailscale {
-			_, detected, err := findFunnel(ctx)
-			if err != nil {
-				remote.Status, remote.Detail = "Unavailable", err.Error()
-			} else if publicURL == "" {
-				publicURL = detected
-			}
+		var readiness dashboard.Readiness
+		if err := desktopReadMethod(ctx, record, http.MethodPost, "/api/readiness/check", &readiness); err != nil {
+			return nil, err
 		}
-		if publicURL != "" {
-			if err := desktopRemoteHealth(ctx, publicURL); err != nil {
-				remote.Status, remote.Detail = "Unavailable", err.Error()
-			} else {
-				remote.Status, remote.Detail = "Responding", publicURL
+		rows := []desktopConnection{{Name: "Local coding", Status: readiness.Label, Detail: readiness.Detail}}
+		for _, check := range readiness.Checks {
+			detail := check.Detail
+			if check.Name == "Dot connection" && readiness.LastContact != nil {
+				detail += " Last authenticated contact: " + readiness.LastContact.Local().Format(time.RFC822) + "."
 			}
+			rows = append(rows, desktopConnection{Name: check.Name, Status: check.Label, Detail: detail})
 		}
-		rows = append(rows, desktopConnection{Name: "MCP intake", Status: "Enabled"}, remote)
+		return rows, nil
 	}
+	rows := []desktopConnection{{Name: "Local service", Status: "Stopped"}, {Name: "Remote access", Status: "Off"}}
 	if cfg.UsesSubscriptions() {
 		providers := map[string]bool{}
 		for _, alias := range cfg.AliasNames() {
@@ -196,34 +193,6 @@ func desktopConnections(ctx context.Context, path string) ([]desktopConnection, 
 	} else {
 		rows = append(rows, desktopConnection{Name: "Models", Status: "API mode", Detail: "Ask Dot to choose a configured model. Connection checks make no model requests."})
 	}
-	if record != nil {
-		var catalog struct {
-			Strategies jobs.StrategyCatalog `json:"strategies"`
-		}
-		if err := desktopRead(ctx, record, "/api/models", &catalog); err != nil {
-			rows = append(rows, desktopConnection{Name: "Model availability", Status: "Unknown", Detail: err.Error()})
-		} else {
-			unavailable := map[string]jobs.Availability{}
-			for _, strategy := range catalog.Strategies.Strategies {
-				for _, alias := range strategy.Aliases {
-					for _, model := range alias.Models {
-						if !model.Available {
-							unavailable[model.Model] = model
-						}
-					}
-				}
-			}
-			keys := make([]string, 0, len(unavailable))
-			for key := range unavailable {
-				keys = append(keys, key)
-			}
-			sort.Strings(keys)
-			for _, key := range keys {
-				model := unavailable[key]
-				rows = append(rows, desktopConnection{Name: key, Status: "Unavailable", Detail: model.Reason, RetryAt: model.RetryAt})
-			}
-		}
-	}
 	return rows, nil
 }
 
@@ -246,6 +215,10 @@ func desktopRemoteHealth(ctx context.Context, publicURL string) error {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("remote health endpoint returned HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64))
+	if err != nil || strings.TrimSpace(string(body)) != "ok" {
+		return errors.New("the connection address did not return a dotshift health response")
 	}
 	return nil
 }

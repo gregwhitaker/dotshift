@@ -479,7 +479,6 @@ func (r *Runner) executeGoal(ctx context.Context, j *Job) error {
 			if err != nil {
 				return err
 			}
-			j.Goal.TestCommand = repo.Test
 			j.Goal.Iterations++
 			j.Goal.Phase = goalWorking
 			if j.Goal.Report.Status == "blocked" {
@@ -498,6 +497,10 @@ func (r *Runner) executeGoal(ctx context.Context, j *Job) error {
 }
 
 func (r *Runner) goalValidationCurrent(ctx context.Context, j *Job, command string) (bool, error) {
+	command, err := validationCommand(j.Worktree, command)
+	if err != nil {
+		return false, nil
+	}
 	head, err := git(ctx, j.Worktree, "rev-parse", "HEAD")
 	if err != nil {
 		return false, err
@@ -608,6 +611,12 @@ func (r *Runner) goalAgent(ctx context.Context, j *Job, repo config.Repo, schema
 }
 
 func goalPrompt(j *Job, testCommand string, review bool) string {
+	if testCommand == "auto" {
+		testCommand = autoTestHelp
+		if j.Goal.TestCommand != "" {
+			testCommand += "\nLast discovered command: " + j.Goal.TestCommand
+		}
+	}
 	role := "Work autonomously toward the project goal. Plan the remaining work, implement the next useful increment, and fix any reported test failures."
 	assessment, remaining := j.Goal.Report.Summary, j.Goal.Report.NextSteps
 	if review {
@@ -654,7 +663,7 @@ Latest validation result: %s
 
 The branch contains all earlier work. Preserve it and continue from the current files.
 For a new project, scaffold its application and meaningful tests for the validation command. A placeholder or an empty test suite is not completion evidence.
-Return JSON with status, summary, and next_steps. Use status "continue" for unfinished work or fixable issues, "complete" only when every part of the goal is implemented and verified, and "blocked" only when a specific missing credential, decision, or external dependency requires human input. Explain completion evidence in summary. Keep a concise cumulative progress summary and remaining plan so the next attempt can continue without the earlier conversation. dotshift independently runs validation and reviews completion.`,
+Return JSON with status, summary, and next_steps. Use status "continue" for unfinished work or fixable issues, "complete" only when every part of the goal is implemented and verified, and "blocked" only when a specific missing credential, decision, or external dependency requires human input. Lead summary with the user-visible result, followed by concise validation evidence and any remaining limitation. Use readable Markdown; omit raw execution traces and model or iteration bookkeeping. Keep enough cumulative progress and remaining plan for the next attempt to continue without the earlier conversation. dotshift independently runs validation and reviews completion.`,
 		role, modelHandoff, j.Prompt, j.Goal.Input, assessment, remaining, j.Error,
 		testCommand, j.TestResult, j.TestOutput)
 }
@@ -662,6 +671,14 @@ Return JSON with status, summary, and next_steps. Use status "continue" for unfi
 func (r *Runner) goalTests(ctx context.Context, j *Job, command string, out io.Writer) error {
 	stepCtx, cancel := context.WithTimeout(ctx, r.Config.Jobs.Timeout.Duration)
 	defer cancel()
+	resolved, resolveErr := validationCommand(j.Worktree, command)
+	j.Goal.TestCommand = resolved
+	if resolveErr != nil {
+		j.TestResult, j.TestOutput = "failed", resolveErr.Error()
+		fmt.Fprintf(out, "--- dotshift: tests failed: %s\n", resolveErr)
+		return nil
+	}
+	command = resolved
 	fmt.Fprintf(out, "\n--- dotshift: running tests: %s\n", command)
 	tail := &tailBuffer{max: 16000}
 	cmd := exec.CommandContext(stepCtx, "sh", "-c", command)

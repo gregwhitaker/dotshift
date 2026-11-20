@@ -35,13 +35,22 @@ public struct Snapshot: Decodable {
     public let mcp_enabled: Bool
     public let config_path: String
     public let jobs: [WorkItem]
+    public let readiness: Readiness?
 
-    public var active: [WorkItem] { jobs.filter(\.isActive) }
-    public var attention: [WorkItem] { jobs.filter(\.needsAttention) }
+    public var currentWork: [WorkItem] { jobs.filter(\.isCurrent) }
+    public var active: [WorkItem] { currentWork.filter(\.isActive) }
+    public var attention: [WorkItem] { currentWork.filter(\.needsAttention) }
     public var completed: [WorkItem] {
-        jobs.filter { $0.status == "done" && $0.test_result != "failed" }
+        currentWork.filter(\.isCompleted)
             .sorted { ($0.finished_at ?? $0.created_at) > ($1.finished_at ?? $1.created_at) }
     }
+}
+
+public struct Readiness: Decodable {
+    public let state: String
+    public let label: String
+    public let detail: String
+    public var needsAttention: Bool { state == "attention" }
 }
 
 public struct WorkItem: Decodable {
@@ -54,6 +63,26 @@ public struct WorkItem: Decodable {
     public let created_at: String
     public let finished_at: String?
     public let goal: Progress?
+    private let suppliedTitle: String?
+    public let work_id: String?
+    public let work_title: String?
+    public let current_id: String?
+    public let resolved_by: String?
+    public let display: Display?
+
+    enum CodingKeys: String, CodingKey {
+        case id, repo, prompt, status, test_result, attention_dismissed, created_at, finished_at, goal
+        case suppliedTitle = "title"
+        case work_id, work_title, current_id, resolved_by, display
+    }
+
+    public struct Display: Decodable {
+        public let kind: String
+        public let label: String
+        public let detail: String
+        public let attention: Bool
+        public let completed: Bool
+    }
 
     public struct Progress: Decodable {
         public let phase: String
@@ -63,14 +92,18 @@ public struct WorkItem: Decodable {
     public struct Selection: Decodable { public let waiting_until: String? }
 
     public var isActive: Bool { status == "running" || status == "queued" }
+    public var isCurrent: Bool { current_id == nil || current_id == id }
+    public var isCompleted: Bool { display?.completed ?? (status == "done" && test_result != "failed") }
     public var needsAttention: Bool {
-        attention_dismissed != true && (["blocked", "failed", "waiting_input"].contains(status) || (status == "done" && test_result == "failed"))
+        attention_dismissed != true && resolved_by == nil && (display?.attention ?? (["blocked", "failed", "waiting_input"].contains(status) || (status == "done" && test_result == "failed")))
     }
     public var title: String {
+        if let title = work_title ?? suppliedTitle, !title.isEmpty { return title }
         let line = prompt.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: .newlines).first ?? ""
-        return line.isEmpty ? "Untitled task" : line
+        return line.isEmpty ? "Local coding request" : line.count > 80 ? String(line.prefix(77)) + "…" : line
     }
     public var phase: String {
+        if let display { return display.label }
         if status == "done" && test_result == "failed" { return "Tests failed" }
         if status == "running" {
             let waiting = goal?.phase == "reviewing"
@@ -114,12 +147,13 @@ public struct NotificationTracker {
         guard snapshot.running else { reset(); return [] }
         var next = [String: String]()
         var events = [WorkEvent]()
-        for work in snapshot.jobs {
-            let state = work.needsAttention ? "attention:\(work.status)" : work.status
-            next[work.id] = state
-            guard let previous, previous[work.id] != state else { continue }
+        for work in snapshot.currentWork {
+            let id = work.work_id ?? work.id
+            let state = "\(work.id):" + (work.needsAttention ? "attention:\(work.status)" : work.status)
+            next[id] = state
+            guard let previous, previous[id] != state else { continue }
             if work.needsAttention { events.append(WorkEvent(kind: .attention, work: work)) }
-            else if work.status == "done" && work.test_result != "failed" { events.append(WorkEvent(kind: .completed, work: work)) }
+            else if work.isCompleted { events.append(WorkEvent(kind: .completed, work: work)) }
         }
         previous = next
         return events

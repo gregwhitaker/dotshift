@@ -113,6 +113,9 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 	if strings.TrimSpace(req.Prompt) == "" {
 		return nil, errors.New("no instructions given")
 	}
+	if len([]rune(req.Title)) > 120 || strings.ContainsAny(req.Title, "\r\n") {
+		return nil, errors.New("title must be a single line of at most 120 characters")
+	}
 	// Keep the old intake names, but never give a new task weaker execution
 	// guarantees than a goal. A retry is checked before parent/branch validation.
 	req.Goal = true
@@ -296,7 +299,7 @@ func (r *Runner) Submit(ctx context.Context, req Request) (*Job, error) {
 	}
 
 	j := &Job{
-		ID: id, Repo: name, RepoPath: top, Prompt: req.Prompt, Model: model,
+		ID: id, Repo: name, RepoPath: top, Prompt: req.Prompt, Title: strings.TrimSpace(req.Title), Model: model,
 		RequestID: req.RequestID, RequestHash: requestHash,
 		ExecutionMode: r.Config.ExecutionMode(),
 		Branch:        branch, BaseCommit: baseCommit, Worktree: filepath.Join(wtDir, id),

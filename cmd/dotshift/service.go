@@ -30,7 +30,8 @@ func startRuntime(path string, cfg *config.Config, router *router.Router, stop c
 	if err != nil {
 		return nil, err
 	}
-	stopMCP, err := startIntake(cfg, runner, dir)
+	readiness := newReadinessMonitor(path, cfg, runner, router)
+	stopMCP, err := startIntake(cfg, runner, dir, readiness.contact)
 	if err != nil {
 		closeStore()
 		return nil, err
@@ -48,7 +49,7 @@ func startRuntime(path string, cfg *config.Config, router *router.Router, stop c
 		cleanup()
 		return nil, fmt.Errorf("recovering goals: %w", err)
 	}
-	ui, err := dashboard.Start(dashboard.Options{Jobs: runner, ConfigPath: path, ExecutionMode: cfg.ExecutionMode(), DefaultModel: cfg.Jobs.Model, MCPEnabled: !cfg.MCP.Disabled, Stop: stop})
+	ui, err := dashboard.Start(dashboard.Options{Jobs: runner, ConfigPath: path, ExecutionMode: cfg.ExecutionMode(), DefaultModel: cfg.Jobs.Model, MCPEnabled: !cfg.MCP.Disabled, Readiness: readiness, Stop: stop})
 	if err != nil {
 		cleanup()
 		return nil, err

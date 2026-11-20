@@ -36,6 +36,9 @@ type Request struct {
 	// RequestID identifies a submission across connection retries. Reuse it
 	// only for the same request; empty keeps compatibility with older clients.
 	RequestID string
+	// Title is a short, user-facing name supplied by Dot. Omission preserves
+	// the submission fingerprint used by clients before titles were supported.
+	Title string `json:",omitempty"`
 	// Repo is an allowlisted repo name, or the path of an allowlisted repo.
 	Repo   string
 	Prompt string
@@ -70,6 +73,7 @@ type Job struct {
 	Repo        string // allowlisted repo name
 	RepoPath    string
 	Prompt      string
+	Title       string
 	Model       string
 	// ExecutionMode is pinned at creation; empty denotes a legacy API job.
 	ExecutionMode string
@@ -132,6 +136,8 @@ type Service interface {
 	// agent in the background. It returns once the job is recorded.
 	Submit(ctx context.Context, req Request) (*Job, error)
 	Get(ctx context.Context, id string) (*Job, error)
+	Delivery(ctx context.Context, id string) (*Delivery, error)
+	Apply(ctx context.Context, req ApplyRequest) (*Delivery, error)
 	// List returns jobs, newest first.
 	List(ctx context.Context) ([]*Job, error)
 	// Cancel stops a job that hasn't finished.

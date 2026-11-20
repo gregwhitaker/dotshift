@@ -18,13 +18,14 @@ import (
 	"github.com/gregwhitaker/dotshift/internal/dashboard"
 	"github.com/gregwhitaker/dotshift/internal/litellm"
 	"github.com/gregwhitaker/dotshift/internal/router"
+	"gopkg.in/yaml.v3"
 )
 
 const usage = `dotshift: local coding and review for Dot
 
 Usage:
   dotshift version                 show the version, source commit, and build date
-  dotshift init     [-config FILE] [-mode subscription|api]   write a starter config (subscription by default)
+  dotshift init     [-config FILE] [-workspace DIR] [-mode subscription|api]   authorize a workspace and write configuration
   dotshift serve    [-config FILE] [-local-only]   start the job runner, dashboard, and optional MCP intake
   dotshift ui       [-config FILE] [-no-open] [-local-only]   start or reuse the service and open the local dashboard
   dotshift menubar  [-config FILE] [-app PATH]   open the macOS menu bar app; quitting it keeps work running
@@ -63,6 +64,7 @@ func main() {
 	path := fs.String("config", config.DefaultPath, "path to dotshift.yaml")
 	force := fs.Bool("force", false, "init: overwrite an existing config")
 	mode := fs.String("mode", config.ModeSubscription, "init: subscription or api")
+	workspace := fs.String("workspace", "", "init: workspace folder Dot may discover repositories in and create new ones inside")
 	localOnly := fs.Bool("local-only", false, "serve: disable MCP and its tunnel for this run without changing the config")
 	_ = fs.Parse(args)
 
@@ -74,7 +76,7 @@ func main() {
 	case "version", "--version":
 		fmt.Println(versionString())
 	case "init":
-		err = runInitMode(*path, *force, *mode)
+		err = runInitWorkspace(*path, *force, *mode, *workspace)
 	case "serve":
 		err = runServe(ctx, *path, *localOnly)
 	case "status":
@@ -106,11 +108,33 @@ func runInit(path string, force bool) error {
 }
 
 func runInitMode(path string, force bool, mode string) error {
+	return runInitWorkspace(path, force, mode, "")
+}
+
+func runInitWorkspace(path string, force bool, mode, workspace string) error {
 	sample := config.Sample
 	if mode == config.ModeSubscription {
 		sample = config.SubscriptionSample
 	} else if mode != config.ModeAPI {
 		return errors.New("mode must be api or subscription")
+	}
+	if workspace != "" {
+		if strings.HasPrefix(workspace, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return err
+			}
+			workspace = filepath.Join(home, workspace[2:])
+		}
+		absolute, err := filepath.Abs(workspace)
+		if err != nil {
+			return err
+		}
+		data, err := yaml.Marshal(map[string]any{"projects": map[string]any{"root": absolute, "discover": true}})
+		if err != nil {
+			return err
+		}
+		sample += "\n# Dot handles repositories and test discovery within this authorized folder.\n" + string(data)
 	}
 	if _, err := os.Stat(path); err == nil && !force {
 		return fmt.Errorf("%s already exists (use -force to overwrite)", path)
@@ -119,7 +143,11 @@ func runInitMode(path string, force bool, mode string) error {
 		return err
 	}
 	if mode == config.ModeSubscription {
-		fmt.Printf("Wrote %s. Sign in with `codex login` and `claude auth login`, add your repos, then run `dotshift check` and `dotshift serve`.\n", path)
+		if workspace != "" {
+			fmt.Printf("Wrote %s. Dot can work in repositories directly inside %s. Sign in with `codex login` and `claude auth login`, then run `dotshift check` and `dotshift connect` with this config.\n", path, workspace)
+		} else {
+			fmt.Printf("Wrote %s. Set projects.root and projects.discover: true to let Dot handle repositories in one workspace, or add individual repos. Sign in, then run `dotshift check` and `dotshift connect` with this config.\n", path)
+		}
 	} else {
 		fmt.Printf("Wrote %s. Set your provider keys in the environment, then run `dotshift serve`.\n", path)
 	}

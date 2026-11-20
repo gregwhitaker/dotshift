@@ -79,6 +79,38 @@ final class MenuBarCoreTests: XCTestCase {
         XCTAssertEqual(try snapshot([old, recent]).completed.map(\.id), ["recent", "old"])
     }
 
+    func testCurrentRequestAndSharedDeliveryStateReplaceOldAlerts() throws {
+        var old = job("old", status: "done", test: "failed")
+        old["work_id"] = "old"
+        old["current_id"] = "new"
+        old["resolved_by"] = "new"
+        old["display"] = ["kind": "needs_dot", "label": "Tests failed", "detail": "Earlier check", "attention": false, "completed": false]
+        var latest = job("new", status: "done", test: "passed")
+        latest["work_id"] = "old"
+        latest["current_id"] = "new"
+        latest["work_title"] = "Improve House Manual"
+        latest["display"] = ["kind": "ready", "label": "Ready to apply", "detail": "Saved separately", "attention": false, "completed": true]
+        let state = try snapshot([old, latest])
+        XCTAssertTrue(state.attention.isEmpty)
+        XCTAssertEqual(state.completed.map(\.id), ["new"])
+        XCTAssertEqual(state.completed.first?.title, "Improve House Manual")
+        XCTAssertEqual(state.completed.first?.phase, "Ready to apply")
+        var tracker = NotificationTracker()
+        XCTAssertTrue(tracker.changes(in: state).isEmpty)
+        latest["display"] = ["kind": "applied", "label": "Applied locally", "detail": "In your local app", "attention": false, "completed": true]
+        XCTAssertTrue(tracker.changes(in: try snapshot([old, latest])).isEmpty, "a delivery refresh must not repeat completion notifications")
+    }
+
+    func testReadinessUsesTheSameMeaningAsTheMonitor() throws {
+        for state in ["ready", "unchecked", "attention"] {
+            let data = try JSONSerialization.data(withJSONObject: ["running": true, "execution_mode": "subscription", "mcp_enabled": true, "config_path": "/tmp/dotshift.yaml", "jobs": [], "readiness": ["state": state, "label": "Shared status", "detail": "Shared explanation"]])
+            let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
+            XCTAssertEqual(snapshot.readiness?.label, "Shared status")
+            XCTAssertEqual(snapshot.readiness?.needsAttention, state == "attention")
+            XCTAssertTrue(snapshot.attention.isEmpty, "setup status must not turn saved requests into failures")
+        }
+    }
+
     func testCommandRunnerDrainsLargeResponsesAndPreservesArguments() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

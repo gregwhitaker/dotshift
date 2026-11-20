@@ -8,6 +8,12 @@ import {
   elapsed,
   waiting,
   filterFromSearch,
+  prioritizeJobs,
+  progressText,
+  currentWork,
+  title,
+  workTitle,
+  completed,
   type Job,
 } from "./model.ts";
 
@@ -28,6 +34,7 @@ test("finished tasks with failed tests still need attention", () => {
   assert.equal(attention(failedTests), true);
   assert.equal(statusLabel(failedTests), "Tests failed");
   assert.equal(selectJobs([failedTests], "attention", "", "").length, 1);
+  assert.equal(selectJobs([failedTests], "done", "", "").length, 0);
   assert.equal(
     attention(job({ status: "running", test_result: "failed" })),
     false,
@@ -60,6 +67,18 @@ const job = (values: Partial<Job>): Job => ({
   attention_version: "issue-1",
   attention_dismissed: false,
   ...values,
+});
+
+test("the overview keeps current work ahead of history without hiding dismissed jobs", () => {
+  const done = job({ id: "done", status: "done", created_at: "2026-11-16T10:00:00Z" });
+  const running = job({ id: "running" });
+  const blocked = job({ id: "blocked", status: "blocked" });
+  const dismissed = job({ id: "dismissed", status: "blocked", attention_dismissed: true });
+  const original = [done, dismissed, running, blocked];
+  assert.deepEqual(prioritizeJobs(original).map(j => j.id), ["blocked", "running", "done", "dismissed"]);
+  assert.equal(original[0], done);
+  assert.equal(progressText(running), "Working locally");
+  assert.equal(progressText(blocked), "Progress saved · Dot can help continue");
 });
 
 test("dismissed issues leave attention but remain in history and can resume", () => {
@@ -135,4 +154,27 @@ test("only stopped unfinished goals can resume", () => {
 test("elapsed time freezes when a job finishes and queued work has no duration", () => {
   assert.equal(elapsed(job({ finished_at: "2026-11-06T10:02:12Z" })), "2m 12s");
   assert.equal(elapsed(job({ started_at: null })), "Not started");
+});
+
+test("one request shows its current result and remains searchable through its history", () => {
+  const old = job({ id: "old", work_id: "old", current_id: "new", status: "done", test_result: "failed", resolved_by: "new", prompt: "Fix the offline export", display: { kind: "needs_dot", label: "Tests failed", detail: "Earlier check", attention: false, completed: false } });
+  const latest = job({ id: "new", parent: "old", work_id: "old", current_id: "new", work_title: "Improve House Manual", title: "Verify the export fix", status: "done", display: { kind: "ready", label: "Ready to apply", detail: "Tests and review passed", attention: false, completed: true } });
+  const unrelated = job({ id: "other", work_id: "other", current_id: "other", status: "blocked" });
+  const all = [old, latest, unrelated];
+  assert.deepEqual(currentWork(all).map(j => j.id), ["new", "other"]);
+  assert.deepEqual(selectJobs(all, "all", "", "offline export").map(j => j.id), ["new"]);
+  assert.deepEqual(selectJobs(all, "attention", "", "").map(j => j.id), ["other"]);
+  assert.equal(workTitle(latest), "Improve House Manual");
+  assert.equal(title(latest), "Verify the export fix");
+  assert.equal(attention(old), false);
+});
+
+test("list badges preserve the server's ready applied and blocked delivery states", () => {
+  for (const [kind, label] of [["ready", "Ready to apply"], ["applied", "Applied locally"], ["delivery_blocked", "Not applied"]]) {
+    const item = job({ status: "done", display: { kind, label, detail: "Saved result", attention: false, completed: true } });
+    assert.equal(statusLabel(item), label);
+    assert.equal(completed(item), true);
+    assert.equal(attention(item), false);
+  }
+  assert.ok(title(job({ prompt: "Long instruction ".repeat(50) })).length <= 80);
 });

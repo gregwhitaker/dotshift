@@ -17,6 +17,7 @@ import (
 // ProjectOptions describes the local policy clients discover in list_repos.
 type ProjectOptions struct {
 	Enabled      bool          `json:"enabled"`
+	Discover     bool          `json:"discover"`
 	Root         string        `json:"root,omitempty"`
 	TestProfiles []TestProfile `json:"test_profiles"`
 }
@@ -42,6 +43,7 @@ type Project struct {
 }
 
 var projectNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+var workspaceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 func (r *Runner) ProjectOptions() ProjectOptions {
 	out := ProjectOptions{TestProfiles: []TestProfile{}}
@@ -49,6 +51,7 @@ func (r *Runner) ProjectOptions() ProjectOptions {
 		return out
 	}
 	out.Enabled = true
+	out.Discover = r.Config.Projects.Discover
 	out.Root = realPath(expandHome(r.Config.Projects.Root))
 	for name, command := range r.Config.Projects.TestProfiles {
 		out.TestProfiles = append(out.TestProfiles, TestProfile{Name: name, Command: command})
@@ -60,6 +63,12 @@ func (r *Runner) ProjectOptions() ProjectOptions {
 // allowedRepos combines the static allowlist with projects still permitted by
 // the current root and test profiles. Config stays immutable while jobs run.
 func (r *Runner) allowedRepos(ctx context.Context) (map[string]config.Repo, error) {
+	return r.allowedReposNamed(ctx, "")
+}
+
+// A delivery check already has a repository name. Validate that checkout
+// without launching Git in every other repository in the workspace.
+func (r *Runner) allowedReposNamed(ctx context.Context, only string) (map[string]config.Repo, error) {
 	out := make(map[string]config.Repo, len(r.Config.Repos))
 	for name, repo := range r.Config.Repos {
 		out[name] = repo
@@ -72,7 +81,12 @@ func (r *Runner) allowedRepos(ctx context.Context) (map[string]config.Repo, erro
 	if err != nil {
 		return nil, fmt.Errorf("read project catalog: %w", err)
 	}
+	registered := make(map[string]bool, len(projects))
 	for _, p := range projects {
+		registered[p.Name] = true
+		if only != "" && p.Name != only {
+			continue
+		}
 		command := r.Config.Projects.TestProfiles[p.TestProfile]
 		if _, exists := out[p.Name]; exists || strings.TrimSpace(command) == "" {
 			continue
@@ -83,6 +97,50 @@ func (r *Runner) allowedRepos(ctx context.Context) (map[string]config.Repo, erro
 			continue
 		}
 		out[p.Name] = config.Repo{Path: p.Path, Test: command}
+	}
+	if options.Discover {
+		// Discovery grants no access outside the locally authorized workspace.
+		// Never rediscover a registered entry whose profile was revoked.
+		if err := projectRoot(ctx, options.Root, false); err != nil {
+			if os.IsNotExist(err) {
+				return out, nil
+			}
+			return nil, err
+		}
+		entries, err := os.ReadDir(options.Root)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			name := entry.Name()
+			if only != "" && name != only {
+				continue
+			}
+			if !entry.IsDir() || !workspaceNamePattern.MatchString(name) || registered[name] {
+				continue
+			}
+			if _, exists := out[name]; exists {
+				continue
+			}
+			p := Project{Name: name, Path: filepath.Join(options.Root, name), root: options.Root}
+			duplicate := false
+			for _, repo := range out {
+				if realPath(expandHome(repo.Path)) == p.Path {
+					duplicate = true
+					break
+				}
+			}
+			if duplicate || managedProjectCheckout(ctx, p) != nil {
+				continue
+			}
+			if _, err := git(ctx, p.Path, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
+				continue
+			}
+			out[name] = config.Repo{Path: p.Path, Test: "auto"}
+		}
 	}
 	return out, nil
 }
@@ -99,7 +157,7 @@ func managedProjectCheckout(ctx context.Context, p Project) error {
 }
 
 func managedProjectPath(p Project) error {
-	if !projectNamePattern.MatchString(p.Name) || p.Path != filepath.Join(p.root, p.Name) || realPath(p.root) != p.root {
+	if !workspaceNamePattern.MatchString(p.Name) || p.Path != filepath.Join(p.root, p.Name) || realPath(p.root) != p.root {
 		return errors.New("project is outside the configured root")
 	}
 	for _, dir := range []string{p.Path, filepath.Join(p.Path, ".git")} {
@@ -124,6 +182,15 @@ func (r *Runner) projectRequest(ctx context.Context, req ProjectRequest) (*Proje
 	}
 	if !projectNamePattern.MatchString(req.Name) {
 		return nil, errors.New("project name must be 1-64 lowercase letters, digits, - or _, starting with a letter or digit; paths are not accepted")
+	}
+	if req.TestProfile == "" {
+		if _, ok := r.Config.Projects.TestProfiles["auto"]; ok {
+			req.TestProfile = "auto"
+		} else if len(r.Config.Projects.TestProfiles) == 1 {
+			for name := range r.Config.Projects.TestProfiles {
+				req.TestProfile = name
+			}
+		}
 	}
 	command, ok := r.Config.Projects.TestProfiles[req.TestProfile]
 	if !ok || strings.TrimSpace(command) == "" {

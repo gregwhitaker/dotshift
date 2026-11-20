@@ -14,19 +14,18 @@ aliases:
 # "default" uses the CLI's default subscription model. To pin a model, use
 # openai/<Codex model name> or anthropic/<Claude Code model name or alias>.
 
-# Allowlist repositories and a validation command before starting work.
+# Prefer init -workspace DIR to let Dot discover repositories and their tests.
+# Individual allowlisted repositories and validation commands remain optional.
 repos: {}
 #  myproject:
 #    path: ~/src/myproject
 #    test: go test ./...
 
-# Uncomment to let Dot create or register projects directly in this folder.
+# Or authorize one workspace here (init -workspace DIR fills this in).
 # projects:
 #   root: ~/workspace
-#   test_profiles:
-#     go: go test ./...
-#     node: npm test
-#     python: python3 -m unittest discover -s tests -v
+#   discover: true
+# Tests default to automatic discovery. Custom test_profiles remain optional.
 
 jobs:
   mode: subscription
@@ -94,13 +93,11 @@ repos: {}
 #    path: ~/code/myapp
 #    test: go test ./...   # required; run independently before completion review
 
-# Uncomment to let Dot create or register projects directly in this folder.
+# Or authorize one workspace here (init -workspace DIR fills this in).
 # projects:
 #   root: ~/workspace
-#   test_profiles:
-#     go: go test ./...
-#     node: npm test
-#     python: python3 -m unittest discover -s tests -v
+#   discover: true
+# Tests default to automatic discovery. Custom test_profiles remain optional.
 
 jobs:
   mode: api

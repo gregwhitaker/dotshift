@@ -1,7 +1,8 @@
 # Local coding
 
 A job takes instructions and a repo, and ends as a branch with the agent's
-work committed on it. Your working copy is never touched.
+work committed on it. Coding keeps your working copy separate. Dot can apply
+the tested and reviewed result to that checkout when you ask.
 
 1. dotshift adds a git worktree for the job on a new branch (`dotshift/<id>`
    unless you name one), starting from the repo's `HEAD`.
@@ -20,23 +21,45 @@ cleanup; a restart finishes cleanup without rerunning the agents. If cleanup
 fails, the job blocks with the Git error. Fix that problem and use `resume_goal`
 without new input to finish cleanup, then send any follow-up instructions.
 
-Jobs can run in repositories you configure below, or in projects registered
-inside `projects.root` (see [Starting new projects](#starting-new-projects-with-dot)):
+## Choose a workspace once
+
+Use `dotshift init -workspace ~/workspace` for a new installation. For an
+existing configuration, add and restart the service:
+
+```yaml
+projects:
+  root: ~/workspace
+  discover: true
+```
+
+Dot's `list_repos` now discovers committed Git repositories directly under that
+folder. Dot can use their names directly with `start_task`; there is no project
+registration step. Discovery ignores symlinks, linked worktrees, nested
+repositories and directories without an initial commit. Explicit `repos:`
+entries take precedence, and existing uncommitted files remain untouched.
+Choose the intended repository in your request; Dot should ask only if the
+name is ambiguous or the location is outside the authorized workspace.
+
+Tests default to `auto` when no custom project profiles are supplied. The runner
+checks for a root `make test` target, a `package.json` test script (npm, pnpm,
+Yarn or Bun), Go, Cargo, or Python tests. It resolves validation again after each
+coding attempt and records the actual command with the tested commit. Missing
+validation sends the job back to coding to establish meaningful tests. For
+another build system, the agent can provide a root Makefile test target.
+Explicit commands remain available for repositories that need them:
 
 ```yaml
 repos:
   myapp:
     path: ~/code/myapp
-    test: go test ./...      # required; its result is kept on the job
-
-jobs:
-  model: smart               # alias used when a job doesn't ask for one
-  timeout: 1h
-  agent:
-    name: codex
-    # command: /usr/local/bin/codex
-  # worktree_dir: ~/dotshift-worktrees   # default: .dotshift/worktrees
+    test: ./scripts/test.sh
 ```
+
+Turning off `projects.discover` removes access to unregistered repositories.
+Registered entries still follow their root and profile policy; a removed
+profile cannot be bypassed by discovery. Repositories outside the workspace
+must be explicitly allowlisted. Existing configurations do not turn on workspace
+discovery automatically.
 
 In API mode, first run `dotshift serve` in another terminal. Subscription
 mode can run local jobs directly:
@@ -69,58 +92,49 @@ not read or copy OAuth credentials. User CLI customizations are disabled for
 these jobs; organization-managed policy still applies. Provider extra-usage
 settings remain under the account owner's control.
 
-## Starting new projects with Dot
+## New applications and follow-ups
 
-Enable a workspace folder and named test commands in `dotshift.yaml` once:
+Ask Dot to build the application in your conversation. Dot calls `create_project`
+with a short name and optional description, then `start_task` or `start_goal`
+with the objective and acceptance criteria. With automatic tests, no test
+profile is needed. The initial repository contains a README and a seed commit;
+the agent implements the app and its tests. Creation never overwrites a folder.
 
-```yaml
-projects:
-  root: ~/workspace
-  test_profiles:
-    go: go test ./...
-    node: npm test
-    python: python3 -m unittest discover -s tests -v
-```
+Existing custom `test_profiles` remain supported. Dot may choose one when a
+specific validation setup is appropriate. `register_project` remains available
+for installations with discovery disabled. Registration and creation persist
+in the local catalog without editing configuration for each application.
 
-Restart `dotshift serve` after changing configuration. Dot can now take an
-instruction such as **“Create a Node project named habit-tracker, build a local
-habit tracker with weekly summaries, and keep fixing it until its tests pass.”**
+Dot follows an accepted task to completion with `task_status` and `task_result`.
+After reconnecting it uses `list_tasks` to recover work. Unique `request_id`
+values prevent duplicate tasks when a submission response is lost. A completed
+task takes follow-up instructions through `send_input` on the same branch.
+For blocked or cancelled work Dot uses `resume_goal`, resolving routine coding
+questions from the existing request. Missing access, user decisions and explicit
+limits still require appropriate input; retries must not silently remove caps.
 
-Dot calls `list_repos` to discover the root and test profiles, then:
+## Applying results locally
 
-1. `create_project` with `name: "habit-tracker"`, `test_profile: "node"`, and an
-   optional short description. This creates `~/workspace/habit-tracker` with a
-   README and initial commit on `main`, and registers it immediately.
-2. `start_goal` with `repo: "habit-tracker"`, the full objective, and concrete
-   acceptance criteria. The agent scaffolds the application and meaningful
-   tests, then uses the normal coding, testing, fixing, and review loop.
-3. `task_status` and `task_result` to follow progress and report the result.
+`task_result` includes `delivery` for a completed result with changes. This
+identifies the exact tested commit and the original checkout's current branch
+and HEAD, plus `ready`, `applied`, or a blocker. When the user's request includes
+applying the change, Dot passes those fields to `apply_task`. The tool only
+fast-forwards a clean checkout to that reviewed commit. It never switches
+branches, resets, stashes, pushes, or applies an unreviewed branch tip.
+An unchanged retry is safe after a lost response.
 
-For a project you have already started, use `register_project` with its folder
-name and a test profile instead. It must be a Git repository directly inside
-`projects.root`, with at least one commit. Registration preserves your files;
-jobs start from committed code, so commit any work you want the agent to use.
-Repositories elsewhere can still be configured explicitly under `repos:`.
-
-Project names are simple lowercase folder names (letters, digits, `-`, `_`, up
-to 64 characters). Creation refuses existing paths. Registration refuses
-symlinks, linked worktrees, and repositories outside the configured root. Dot
-selects test commands from your local profiles; the MCP tools cannot supply an
-arbitrary shell command. The agent must build a real test suite for the chosen
-command. Add other profiles locally for different build tools or test runners.
-
-The project catalog is saved in `.dotshift/jobs.db`; new entries are usable
-immediately and survive restarts. Removing/changing the root or removing a
-profile disables the affected managed entries. Explicit `repos:` entries take
-precedence. Project creation itself makes no model calls. Goal results remain
-on their task branch, which `task_result` identifies; switch to that branch in
-the project folder to run or review the completed application.
+Local edits are preserved and require a decision about how to proceed. If the
+destination diverged, Dot can start a new integration task from the current
+destination commit, incorporate the previous result, and run tests and review
+again before applying it. A request for a proposal or a separate branch leaves
+its result on that branch. Publishing and pushing require their own scope.
 
 ## Project goals
 
 Dot can hand off a whole project objective with the `start_goal` MCP tool.
-The repository must have a test command under `repos.NAME.test`, or a test
-profile selected through `create_project` or `register_project`.
+Both `start_task` and `start_goal` use the same autonomous workflow. Automatic
+validation is available to discovered repositories and the default project
+profile; explicit repository commands and custom profiles remain supported.
 
 ```json
 {
