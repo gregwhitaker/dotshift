@@ -62,9 +62,12 @@ This setup gives ChatGPT a public HTTPS endpoint through
 runs `tailscale funnel 8787`, which serves the endpoint at
 your machine's `https://<machine>.<tailnet>.ts.net` name, and stops it on
 exit. Only the MCP endpoint is published; the router stays on this machine.
-Dotshift supervises the tunnel and retries startup failures or unexpected
-exits with a delay that grows from one to thirty seconds. When Tailscale
-comes back online, the tunnel reconnects without restarting Dotshift.
+Local startup does not wait for Tailscale. Dotshift supervises the tunnel and
+retries startup failures or unexpected exits with a delay that grows from one
+to five seconds. It also checks for a stopped Tailscale daemon even when the
+tunnel process is still alive. When Tailscale comes back online, the tunnel
+reconnects without restarting Dotshift. Status commands have a bounded timeout,
+including when the macOS shell wrapper leaves a child holding its output open.
 Shutdown stops the CLI's whole process group, including the macOS shell
 wrapper's child, so a restart does not leave a conflicting listener behind.
 On macOS, the runner records its tunnel process and kernel start time in

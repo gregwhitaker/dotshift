@@ -73,7 +73,9 @@ func (m *readinessMonitor) currentLocked() *dashboard.Readiness {
 	// A reachable public endpoint is not evidence that Dot is connected.
 	for i := range out.Checks {
 		check := &out.Checks[i]
-		if check.Name == "Dot connection" && check.State != "attention" {
+		// A newer authenticated request proves that an earlier connection
+		// failure has recovered. Never use older contact to hide a new failure.
+		if check.Name == "Dot connection" && (check.State != "attention" || m.lastSeen.After(out.CheckedAt)) {
 			if m.lastSeen.IsZero() || m.now().Sub(m.lastSeen) > 24*time.Hour {
 				check.State, check.Label = "unchecked", "Waiting for Dot"
 				check.Detail = "Ask Dot to check its dotshift connection. A successful sign-in request confirms the connection; a local health check alone cannot."
@@ -116,7 +118,11 @@ func (m *readinessMonitor) Check(ctx context.Context, force bool) (*dashboard.Re
 			return m.Check(ctx, false)
 		}
 	}
-	if m.cached != nil && m.now().Sub(m.cached.CheckedAt) < time.Minute && (!force || m.now().Sub(m.cached.CheckedAt) < 3*time.Second) {
+	cacheFor := time.Minute
+	if m.cached != nil && m.currentLocked().State != "ready" {
+		cacheFor = 5 * time.Second
+	}
+	if m.cached != nil && m.now().Sub(m.cached.CheckedAt) < cacheFor && (!force || m.now().Sub(m.cached.CheckedAt) < 3*time.Second) {
 		out := m.currentLocked()
 		m.mu.Unlock()
 		return out, nil
@@ -174,7 +180,7 @@ func checkDotConnection(ctx context.Context, cfg *config.Config) dashboard.Readi
 	if publicURL == "" && cfg.MCP.Tunnel == config.TunnelTailscale {
 		_, detected, err := findFunnel(ctx)
 		if err != nil {
-			check.State, check.Label, check.Detail = "attention", "Dot connection unavailable", "The connection to this computer could not be checked. Dotshift retries its Tailscale connection automatically. Check again after restoring access."
+			check.State, check.Label, check.Detail = "attention", "Waiting for Tailscale", "Dotshift is running locally. Start or connect Tailscale; the Dot connection will recover automatically."
 			return check
 		}
 		publicURL = detected

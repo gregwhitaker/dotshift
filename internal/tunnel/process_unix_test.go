@@ -3,6 +3,8 @@
 package tunnel
 
 import (
+	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +13,36 @@ import (
 	"testing"
 	"time"
 )
+
+func TestPublicURLTimeoutReachesWrapperChild(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child-pid")
+	bin := filepath.Join(dir, "tailscale")
+	script := "#!/bin/sh\nsleep 10 &\necho $! > '" + pidFile + "'\nwait\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		data, _ := os.ReadFile(pidFile)
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			if p, err := os.FindProcess(pid); err == nil {
+				_ = p.Kill()
+			}
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := PublicURL(ctx, bin); done <- err }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("lost timeout: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Tailscale wrapper child held the status pipe open after cancellation")
+	}
+}
 
 // The macOS installation puts a shell wrapper on PATH. Interrupting just
 // that shell leaves the actual CLI alive, still owning Funnel's listener.

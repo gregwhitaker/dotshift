@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -692,6 +693,39 @@ func TestHostsThroughATunnel(t *testing.T) {
 	// A tunnel that rewrites Host to the local address still gets the public URL.
 	if status, out := metadata(t, srv, "/.well-known/oauth-protected-resource", "127.0.0.1:8787", nil); status != 200 || out["resource"] != "https://dotshift.example.com/mcp" {
 		t.Fatalf("local host with public URL: %d %v", status, out)
+	}
+}
+
+func TestDetectedPublicAddressUpdatesMetadataAndHostBoundary(t *testing.T) {
+	runner := newRunner(t, editScript)
+	store, err := OpenAuthStore(filepath.Join(t.TempDir(), "auth.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var detected atomic.Value
+	detected.Store("")
+	for _, configured := range []string{"", "https://configured.example"} {
+		h, err := NewHandler(Options{Jobs: runner, Auth: store, Passcode: testPasscode, PublicURL: configured, DetectedPublicURL: func() string { return detected.Load().(string) }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := httptest.NewServer(h)
+		defer srv.Close()
+		for _, address := range []string{"https://first.tail1234.ts.net", "https://second.tail1234.ts.net"} {
+			detected.Store(address)
+			want := address
+			if configured != "" {
+				want = configured
+			}
+			status, out := metadata(t, srv, "/.well-known/oauth-authorization-server", "localhost:8787", nil)
+			if status != 200 || out["issuer"] != want {
+				t.Fatalf("wrong recovered issuer: %d %v", status, out)
+			}
+			if status, _ := metadata(t, srv, "/healthz", "unrelated.example", nil); status != http.StatusMisdirectedRequest {
+				t.Fatalf("lost the detected host boundary: %d", status)
+			}
+		}
 	}
 }
 

@@ -37,7 +37,19 @@ func FindTailscale() (string, error) {
 func PublicURL(ctx context.Context, bin string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, bin, "status", "--json").Output()
+	cmd := exec.CommandContext(ctx, bin, "status", "--json")
+	// The macOS PATH entry can be a shell wrapper. Killing only that shell
+	// leaves its child holding stdout open, defeating CommandContext's timeout.
+	prepareFunnelProcess(cmd)
+	cmd.Cancel = func() error { killFunnelProcess(cmd); return nil }
+	cmd.WaitDelay = 250 * time.Millisecond
+	out, err := cmd.Output()
+	if cmd.Process != nil {
+		killFunnelProcess(cmd)
+	}
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("tailscale status: %w", ctx.Err())
+	}
 	if err != nil {
 		return "", fmt.Errorf("tailscale status: %w", err)
 	}

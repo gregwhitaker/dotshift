@@ -28,8 +28,9 @@ report images are disabled.
 
 **Connection and help** shows checks of the running service's authorized workspace,
 default coding/review access, and Dot connection. Browser and menu share one cached
-result, refreshed every minute; **Check again** explicitly rechecks without changing
-sign-ins, limits, or jobs. Slow checks do not block normal status polling. A public
+result, refreshed every minute when ready and retried after five seconds otherwise;
+**Check again** explicitly rechecks without changing sign-ins, limits, or jobs.
+Slow checks do not block normal status polling. A public
 health response alone never means Dot is connected: recent authenticated contact
 in this service session is also required, and its time is shown. Stale checks return
 to an unchecked state. Checks make no coding/model requests and cannot measure

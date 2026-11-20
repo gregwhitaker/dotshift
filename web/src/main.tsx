@@ -198,7 +198,9 @@ function App() {
     if (!connected) { setChecking(false); return; }
     const controller = new AbortController();
     void checkReadiness(false, controller.signal);
-    const timer = setInterval(() => { void checkReadiness(false, controller.signal); }, 60000);
+    // The service caches healthy probes for a minute and retries unavailable
+    // connections sooner, so a recovered tunnel does not leave a stale warning.
+    const timer = setInterval(() => { void checkReadiness(false, controller.signal); }, 5000);
     return () => { controller.abort(); clearInterval(timer); };
   }, [connected, checkReadiness]);
   const [theme, setTheme] = useState(

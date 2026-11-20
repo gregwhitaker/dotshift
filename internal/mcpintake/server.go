@@ -25,6 +25,9 @@ type Options struct {
 	// (other than this machine) are refused; when empty, each request's own
 	// host is used, as the tunnel forwarded it.
 	PublicURL string
+	// DetectedPublicURL supplies a host discovered after local startup. The
+	// configured PublicURL takes precedence. This callback must not block.
+	DetectedPublicURL func() string
 	// Logf, if set, gets a line for each tool call and OAuth event.
 	Logf func(format string, args ...any)
 	// OnAuthenticated records contact without retaining credentials or requests.
@@ -88,7 +91,18 @@ func NewHandler(o Options) (http.Handler, error) {
 	mux.HandleFunc(authorizePath, oa.authorize)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		base, ok := requestBase(r, public)
+		currentPublic := public
+		if currentPublic == nil && o.DetectedPublicURL != nil {
+			if address := o.DetectedPublicURL(); address != "" {
+				var err error
+				currentPublic, err = url.Parse(address)
+				if err != nil || currentPublic.Scheme != "https" || currentPublic.Host == "" || currentPublic.User != nil {
+					http.Error(w, "public connection unavailable", http.StatusServiceUnavailable)
+					return
+				}
+			}
+		}
+		base, ok := requestBase(r, currentPublic)
 		if !ok {
 			http.Error(w, "unknown host", http.StatusMisdirectedRequest)
 			return

@@ -63,6 +63,30 @@ func TestReadinessDoesNotHideProblemsBehindRecentContact(t *testing.T) {
 	}
 }
 
+func TestReadinessRecoversPromptlyFromOlderTunnelFailure(t *testing.T) {
+	now := time.Now()
+	calls := 0
+	m := &readinessMonitor{now: func() time.Time { return now }, probe: func(context.Context) []dashboard.ReadinessCheck {
+		calls++
+		return []dashboard.ReadinessCheck{{Name: "Coding access", State: "ready"}, {Name: "Dot connection", State: "attention", Label: "Waiting for Tailscale"}}
+	}}
+	_, _ = m.Check(context.Background(), false)
+	now = now.Add(6 * time.Second)
+	_, _ = m.Check(context.Background(), false)
+	if calls != 2 {
+		t.Fatal("an offline connection waited a full minute to retry")
+	}
+	now = now.Add(time.Second)
+	m.contact()
+	if got := m.Current(); got.State != "ready" {
+		t.Fatalf("new authenticated contact left a stale outage: %+v", got)
+	}
+	m.cached.Checks[0].State = "attention"
+	if got := m.Current(); got.State != "attention" {
+		t.Fatal("contact hid an unrelated coding-access problem")
+	}
+}
+
 func TestReadinessCoalescesChecksWithoutBlockingStatus(t *testing.T) {
 	started, finish := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32

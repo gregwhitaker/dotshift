@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/gregwhitaker/dotshift/internal/config"
@@ -37,20 +38,15 @@ func startIntake(cfg *config.Config, runner *jobs.Runner, dir string, onAuthenti
 	closeAll := func() { authStore.Close() }
 
 	publicURL := cfg.MCP.PublicURL
-	if cfg.MCP.Tunnel == config.TunnelTailscale {
-		_, url, err := findFunnel(context.Background())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: Tailscale status: %v\n  Tunnel setup will retry automatically.\n", err)
-		} else {
-			if publicURL == "" {
-				publicURL = url
-			}
-		}
-	}
+	// Tailscale discovery belongs to the background supervisor. Local startup
+	// must not wait for its daemon, sign-in, or wrapper process to respond.
+	var detectedURL atomic.Value
+	detectedURL.Store("")
 	handler, err := mcpintake.NewHandler(mcpintake.Options{
 		Jobs: runner, DefaultModel: cfg.Jobs.Model, Models: cfg.AliasNames(),
 		Auth: authStore, Passcode: passcode, PublicURL: publicURL, Logf: logLine,
-		OnAuthenticated: onAuthenticated,
+		OnAuthenticated:   onAuthenticated,
+		DetectedPublicURL: func() string { return detectedURL.Load().(string) },
 	})
 	if err != nil {
 		closeAll()
@@ -76,7 +72,7 @@ func startIntake(cfg *config.Config, runner *jobs.Runner, dir string, onAuthenti
 		_, port, _ := net.SplitHostPort(ln.Addr().String())
 		go func() {
 			defer close(done)
-			tunnel.SuperviseFunnel(ctx, port, os.Stdout, logLine, dir)
+			tunnel.SuperviseFunnel(ctx, port, os.Stdout, logLine, dir, func(url string) { detectedURL.Store(url) })
 		}()
 		stopFunnel = func() { cancel(); <-done }
 	} else if publicURL != "" && cfg.MCP.Tunnel == config.TunnelNone {

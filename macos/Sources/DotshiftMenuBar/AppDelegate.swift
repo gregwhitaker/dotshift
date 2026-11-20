@@ -121,7 +121,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
             }
             refreshing = false
             rebuildMenu()
-            if connectionsDate == nil || Date().timeIntervalSince(connectionsDate!) > 60 { refreshConnections() }
+            let interval: TimeInterval = snapshot?.readiness?.state == "ready" ? 60 : 5
+            if connectionsDate == nil || Date().timeIntervalSince(connectionsDate!) >= interval { refreshConnections() }
         }
     }
 
@@ -143,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
             }
             checkingConnections = false
             connectionsDate = Date()
+            refresh()
             rebuildMenu()
         }
     }
@@ -164,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         }
     }
 
-    func menuWillOpen(_ menu: NSMenu) { menuOpen = true; refresh() }
+    func menuWillOpen(_ menu: NSMenu) { rebuildMenu(); menuOpen = true; refresh() }
     func menuDidClose(_ menu: NSMenu) {
         menuOpen = false
         DispatchQueue.main.async { [weak self] in self?.rebuildMenu() }
@@ -188,7 +190,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         let activity = snapshot?.ongoing.first.map { "\($0.title) · \($0.activity)" } ?? "Nothing running"
         statusItem.button?.toolTip = "dotshift · \(state)\n\(activity)"
         statusItem.button?.setAccessibilityLabel("dotshift, \(state), \(inputCount) need your input")
-        guard !menuOpen else { return }
+        if menuOpen {
+            // Keep a menu held open during reconnection current without
+            // replacing the user's hovered work items or service actions.
+            if let title = menu.items.first {
+                title.title = state
+                title.attributedTitle = NSAttributedString(string: state, attributes: [.font: NSFont.boldSystemFont(ofSize: 13)])
+            }
+            for entry in menu.items where entry.title == "See What Is Needed…" {
+                entry.isHidden = snapshot?.readiness?.needsAttention != true
+            }
+            return
+        }
         menu.removeAllItems()
         let title = item(state, action: #selector(showReadiness), enabled: configuration != nil)
         title.attributedTitle = NSAttributedString(string: title.title, attributes: [.font: NSFont.boldSystemFont(ofSize: 13)])

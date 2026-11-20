@@ -95,7 +95,7 @@ status)
   else
     echo '{"BackendState":"Stopped"}'
   fi ;;
-funnel) trap 'exit 0' INT; while :; do sleep 0.05; done ;;
+funnel) echo started >> "$DOTSHIFT_TUNNEL_TEST_STATE/starts"; trap 'exit 0' INT; while :; do sleep 0.05; done ;;
 esac
 `
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -108,6 +108,32 @@ esac
 		t.Fatal(err)
 	}
 	waitSupervisorLog(t, log, "is serving MCP at https://laptop.tail1234.ts.net/mcp")
+	// The foreground CLI deliberately stays alive when the daemon stops.
+	// Recovery must detect that stale process, not just wait for it to exit.
+	if err := os.Remove(filepath.Join(dir, "online")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for strings.Count(log.String(), "Tailscale is stopped") < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("live Funnel hid an offline daemon: %s", log.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "online"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for strings.Count(log.String(), "is serving MCP") < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("live Funnel did not restart after reconnection: %s", log.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	starts, _ := os.ReadFile(filepath.Join(dir, "starts"))
+	if strings.Count(string(starts), "started") != 2 {
+		t.Fatalf("expected a fresh Funnel process: %s", starts)
+	}
 }
 
 func TestSuperviseFunnelCancelsBackoff(t *testing.T) {

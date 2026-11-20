@@ -50,9 +50,11 @@ is a small status view, with the archive behind Troubleshooting.
 Connection details check the authorized workspace, configured coding and review
 access, and Dot’s authenticated contact with this service. Public endpoint health
 alone does not confirm Dot access. Checks make no model requests and do not
-estimate remaining subscription allowance. Work refreshes every five seconds;
-connection checks refresh every minute and can be requested with **Check Again**.
-Checks never restart work or change sign-ins.
+estimate remaining subscription allowance. Work refreshes every five seconds.
+Healthy connection checks refresh every minute; unavailable connections retry
+after five seconds, and **Check Again** requests a check. **Waiting for Tailscale**
+means Dotshift is running locally and will reconnect automatically. The status
+updates even while the menu stays open. Checks never restart work or change sign-ins.
 
 `dotshift ui` opens the menu app on macOS. `dotshift ui -path /history` explicitly
 opens the browser archive; `-path /` opens browser status. `-no-open` starts or
